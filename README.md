@@ -1,554 +1,523 @@
 # Claire
 
-> **New here? Start with [GETTING_STARTED.md](GETTING_STARTED.md)**: clone,
-> pick a model, and have Claire running in your browser in about 15 minutes.
+Claire is a local AI assistant for coding, file work, and ongoing projects. You
+talk to her in a browser or terminal; she can inspect files, edit code, run
+approved commands, and delegate longer jobs to task threads that report back.
 
-A local coding agent that runs entirely on your own machine. No cloud API, no
-account, no per-token cost — it talks to a model you're running yourself via
-[llama.cpp](https://github.com/ggerganov/llama.cpp), and it edits files, runs
-shell commands, and reports back the same way a terminal coding assistant
-would. Python standard library only — zero third-party dependencies.
+The model runs on your machine through **LM Studio**, **llama.cpp**, or the
+optional **Splash runtime on macOS**. The core assistant needs no cloud API key
+or hosted inference subscription. Chats, task history, and memory are stored
+locally. Web searches and connected services use the network when you use them.
 
-```
-  claire ❯ add tests for utils.py
+Claire includes:
 
-  ◇ thinking
-    Reading utils.py first to see what it actually does.
+- A local web app with chats, projects, task traces, and command approvals.
+- Project memory and long-term notes stored as editable Markdown.
+- Skills for coding, debugging, testing, research, and integration work.
+- Scheduled tasks and optional connections to outside services.
+- Native Mac app and browser controls on macOS; Windows supports the core
+  assistant with the platform limits described below.
 
-  ⏺ read_file utils.py 2s
-    └ utils.py (lines 1-48 of 48):
+[Clone and start](#clone-and-start) · [Architecture](#architecture) ·
+[Using Claire](#using-claire) · [Configuration](#configuration) ·
+[Platform support and safety](#platform-support-and-safety) ·
+[Development and testing](#development-and-testing) · [Troubleshooting](#troubleshooting)
 
-  ⏺ write_file test_utils.py 6s
-    └ Created test_utils.py (31 lines).
+## Clone and start
 
-  ⏺ run_command python3 -m pytest test_utils.py 3s
-    └ exit=0
+### Requirements
 
-  ✔ done 12s
-```
+| Requirement | What you need |
+| --- | --- |
+| Git | To clone this repository. |
+| Python | Python 3.9 or newer. The Windows setup script can also use an installed `uv` to create a Python 3.12 environment. |
+| A local model runtime | The startup steps below use [LM Studio](https://lmstudio.ai). A llama.cpp alternative is included afterward. |
+| A downloaded model | A language model that follows instructions and tool calls, with enough RAM and disk space for its weights and context. Model weights are not included in this repository. |
+| A browser | The web app is served by Python; no Node.js installation, frontend build, or npm install is needed to use it. |
 
-Everything it does is confined to the directory you launch it from, and any
-shell command it wants to run stops for your approval first (unless you opt
-out with `--yolo`).
-
----
-
-## claire2: the core service (in progress)
-
-`claire.py` above is v1: one file, one conversation, one terminal. `claire2`
-runs the same agent on a new core (`claire_core/`) where the loop emits events
-instead of printing, so several threads can run at once and any client can
-watch them. v1 keeps working unchanged while v2 is built out.
-
-```
-claire2                    work in this directory, as v1 does
-claire2 "task"             one-shot
-claire2 home               talk to Claire in her home thread
-claire2 app                the same, in your browser, with everything else
-claire2 tasks              task threads and how each ended
-claire2 approvals          answer anything a background task is waiting on
-claire2 tools              every tool and its health
-claire2 inbox              notes Claire has left for you
-claire2 bench [brain|scout]   measure a model on Claire's own tasks
-claire2 connectors         services Claire can reach: add, connect, test, remove
-claire2 schedules          recurring jobs: pause, resume, run, remove
-claire2 autostart on|off   start the service when you log in
-claire2 skills             instructions Claire can load: add FILE.md, show, remove
-claire2 models             the model Claire uses: add FILE.gguf, add-lmstudio KEY, use NAME, remove NAME
-claire2 status | serve
-claire2 stop [--unload]    stop the service (--unload: and the model, freeing its memory)
-```
-
-**Chats and tasks.** In the app there is no main chat: every chat is its own
-conversation, started with New chat or by typing on the command center or a
-project page. (`claire2 home` keeps one ongoing conversation for the terminal.)
-When you ask for real work, Claire starts a task thread with its own context
-and working directory, and tells you the outcome in the chat that asked when it
-reports back. Chats carry her identity (`identity/` in the vault, yours to
-edit); task threads get the working method, their project's memory and the
-shared index. The service starts itself in the background and
-keeps running so tasks can finish; `claire2 stop` ends it.
-
-**Projects.** Chats and tasks are organised in projects, each a folder of
-work with a memory of its own. A task is filed under the project whose folder
-it works in; the first task in a new folder (the git repository it sits in,
-when there is one) creates that project. OS folders such as Desktop or
-Downloads, scratch folders and Claire's own state never become projects on
-their own. You can also add a project by hand, with a folder or as a plain
-group (Browse… opens the Finder's folder chooser), and move a chat into or out
-of one. Claire can do the same when you ask her in a chat ("make a project for
-~/code/shop", "delete the shop project", "put this chat in shop"); removing a
-project only takes it off the list, and she cannot delete folders. A chat outside every project follows the work across all of them.
-
-Each project's memory is a folder in the vault, `projects/<name>/`:
-`PROJECT.md` says what the project is and how work is done there (yours to
-edit, in the app or by hand; Claire adds to it with `remember kind=project`),
-`work/` is the dated record of what was done, written automatically as each
-task starts and ends, and `tasks/` holds every finished task's report. A chat
-or task in a project is given that project's `PROJECT.md` and latest work, and
-no other project's. `recall` searches everything but ranks the thread's own
-project first. The global `work/` log keeps one short line per task across
-every project, so any chat and the command center can track several
-pieces of work at once. Single-file notes from before (`projects/<name>.md`)
-and earlier work records are moved into the project's folder the first time
-it is used; tasks from before are filed when the service starts. Removing a
-project from the list keeps its chats, tasks and memory folder.
-
-**Shared memory.** Every chat and task is also given `MEMORY.md`, an index
-Claire writes from the vault: what she knows about you (`identity/sir.md`),
-recent work across all projects, each project, each learned note, recent
-sessions and open inbox notes. Each is one line ending with the file that holds
-the detail, so a thread knows what exists without carrying it all; `recall`
-with that path reads the file in full, and `recall` with words searches. The
-index is rewritten from the files whenever they change; edit the files, not
-the index. Chats keep the slowly changing part in their system prompt and get
-recent work with each turn, so the prompt stays reusable between turns.
-
-**The app.** `claire2 app` opens a local page served by the same service:
-a sidebar of projects holding their chats and tasks (as in a code workspace),
-a command center showing the work under way in every project, a page per
-project with its `PROJECT.md` and recent work, your chats, each
-task's step-by-step trace as it happens, approval
-requests with Allow and Deny, the inbox, a read-only view of the vault, tool
-health, and the report cards. It is one page with no external libraries and
-works offline. The link carries the service token once; the page trades it for
-an HttpOnly, SameSite=Strict cookie and drops it from the address. Because the
-page shows text a model wrote after reading the web, nothing is ever inserted
-as HTML and a strict Content-Security-Policy forbids inline script.
-`tests/ui/run.sh` drives the app in headless Chrome against a scripted model.
-
-**Safety.** Three layers, strongest first:
-
-1. *OS sandbox* (macOS Seatbelt), enforced by the kernel on every shell command
-   and everything it spawns. A task can write only inside its own working
-   directory and temp, and cannot read credentials (ssh, cloud, git, keychains,
-   browser profiles) or Claire's own state. Programs that hand work to
-   something outside the sandbox (`osascript`, `open`, `launchctl`) cannot be
-   launched.
-2. *Forbidden list.* Commands that could destroy the machine (`rm -rf ~`,
-   `sudo`, disk formatting, shutdown) are refused. No approval or mode changes
-   that.
-3. *Approval.* Dangerous-looking commands always ask, including in `--yolo` and
-   in background tasks. A command that needs to reach outside the sandbox must
-   say so, and that always asks too. An unanswered request expires as a no.
-   Sending output to `/dev/null` or the standard streams is not counted as
-   dangerous.
-
-**Human-free mode** (the switch at the bottom of the app's sidebar) lets Claire
-go ahead without asking: package installs, commands outside the sandbox,
-browser and connector steps, schedules, network access for her own code, and
-installing integrations she built. She still asks before anything that deletes
-(`rm`, `rmdir`, `git clean`, a connector's delete or remove actions), `git push`
-and hard resets, stopping processes, piping a download into a shell, sending,
-paying, signing in or uploading, closing a tab you had open, and requests to
-local addresses; anything not yet classified asks too. The mode only removes
-approvals: the sandbox and the forbidden list are unchanged, only you can switch
-it (there is no tool for it), and every request it answers is kept in the
-approvals table as `auto` and noted in that thread. It is stored in
-`mode.json` in the state folder and survives restarts.
-
-On a machine with no sandbox (Linux, Windows) the core falls back to v1's
-pattern guards, and the workshop below is switched off.
-
-**Workshop and self-healing.** Claire can run Python she writes (`run_code`) and
-keep working code as a tool (`make_tool`). That code runs under a stricter
-profile: it can read the task's folder, write only to a scratch folder, sees
-nothing else in your home directory, and has no network unless you approve it.
-A tool is registered only after its own test passes in that sandbox, and each
-registration is a git commit under `~/.claire/workshop`.
-
-When a tool turns out to be broken, as opposed to misused, Claire is told so
-instead of being left to retry it. She gets the result another way, may
-register a stand-in, and leaves a note in `inbox/` in the vault with the error,
-the arguments and the traceback. Later threads are told which tool is broken
-and what to use instead. After you repair it: `claire2 tools reset NAME`.
-Built-in tools cannot be replaced from the workshop.
-
-**Skills.** A skill is a markdown file of instructions for one kind of work:
-how to review code, how you want reports written, how to research something.
-Claire sees the list with a one-line description of each, and a task gets a
-skill in one of three ways: the home thread names it when starting the task,
-the task loads it itself with `use_skill`, or the skill is marked
-`always: true` and every task starts with it. `coding` is built in (it is the
-code-specific half of v1's prompt: root cause, scope, tests as the authority,
-auditing) and is loaded by default when you run `claire2` in a directory. Yours
-live in `skills/` in the vault; add one with `claire2 skills add FILE.md` or in
-the app. One of yours with a built-in's name replaces it. Only you can write
-skills: there is no tool that lets a model create or change one. Choosing a
-skill is the model's judgement and is not perfectly reliable, which is what
-`always: true` is for.
-
-Built-in procedures cover `building-software`, `debugging`, `testing`, `uat`,
-`researching-apis`, and `reviewing-changes`, alongside `coding`, `integrations`
-and `building-integrations`. The integration builder loads API research, testing
-and UAT with its coding instructions. UAT distinguishes offline-tested, installed,
-connected and accepted against a real account; a passing fixture test alone is
-not a live verification. Integrations are hot-loaded after approved installation.
-
-Skill frontmatter uses one-line fields: `when`, comma-separated `requires` and
-`kinds` (`agent` and/or `home`), and `steps` (0–150). Uploads and body edits preserve
-these fields. Dependencies are loaded for explicitly named skills too; cycles
-are deduplicated. Available descriptions remain visible if automatic routing
-fails. New skills and edits are picked up on the next turn without restarting.
-Changes to Claire's Python engine require restarting the service.
-
-For LM Studio's Qwen3.8 27B, normal mode sends `reasoning_effort: none`;
-explicit/deeper thinking defaults to `medium`. Set
-`CLAIRE_LMSTUDIO_REASONING_EFFORT=low|medium|xhigh` to choose its depth. `low` still enables reasoning on this
-model. Other model mappings are unchanged. Token-limit truncation is recorded
-and never executed as a partial tool call.
-
-Run `python3 -m tests.live_integration_eval` for a disposable local-model
-integration-repair exercise with independent acceptance cases. It uses synthetic
-API data and fresh state, and does not install anything or read saved credentials.
-Use `--api URL --model ID` to evaluate a different local configuration.
-
-Integration checks require each advertised action to succeed through
-`claire_kit.call` in offline tests and verify function arguments against the
-manifest. Tests must still assert the request and response contract: action
-coverage alone does not establish correctness. Credentialed builds must declare
-a valid read-only connection check. The kit's fixture transport honors allowed
-HTTP errors and preserves empty JSON request bodies just like real requests.
-
-**Models.** The app's **Models** page (or `claire2 models`) adds a model by its
-`.gguf` file (Browse… opens the Finder) or from LM Studio's library, reads the
-file's own trained context, and switches Claire to it: **Restart Claire now**
-unloads the old model, freeing its memory, and starts a fresh service on the new
-one (it waits while any chat or task is working). Added models and the choice are
-kept in `models.json` in the state folder, which wins over `config.py`; a
-command-line flag or environment variable still wins over both, and
-`CLAIRE_MODELS=off` ignores it. An added llama.cpp model gets its own
-`llama-server` on port 8090 and up.
-
-**One model.** The uncensored Qwen3.8 27B, through Splash 1.6.1, holds the
-conversation (the `talk` role: bounded local file actions and delegation) and
-does the coding tasks. It stays loaded. The Qwen3.5 9B that used to hold the
-conversation is configured but not loaded; one line in `ROLES` brings it back.
-Its Splash server serves the model's native 262,144-token context (raised from
-32,768 on 2026-11-17: the model is hybrid, only every fourth layer keeps a KV
-cache, so the full window costs about 8 GiB of int8 cache, allocated as it is
-used, inside the 36 GiB ceiling). Conversations still send a bounded recent
-window, for speed. Named `standard27` and `fast35` worker profiles are also available; see
-[CLAIRE_SPLASH_UPGRADE.md](CLAIRE_SPLASH_UPGRADE.md) for why one model, what it
-costs, model selection, lifecycle, installation, rollback and measured speed.
-Replies are generated at temperature 0 (`TEMPERATURE` in `config.py`). The controller uses
-schema-constrained JSON decisions, a bounded conversation window, and on-demand
-history retrieval. Full conversations remain stored. The worker receives the
-specific brief, relevant skills and worker tools, without the home persona or
-global diary. Its default file reads are 120-line windows; explicit ranges remain
-available.
-
-`CONTROLLER_ENABLED`, `CONTROLLER_HISTORY_CHARS`, `CONTROLLER_MAX_STEPS`,
-`WORKER_CONTEXT`, `MODEL_IDLE_SECONDS`, `PRELOAD_MODEL` and `ROLES` in `config.py` control this setup.
-`MAX_TASK_WORKERS = 1` prioritizes interactive latency; additional coding tasks
-queue. The explicit deep-mode toggle selects the strong model for that chat.
-Worker reasoning remains stable throughout each turn to preserve the prompt
-cache. A failed controller can hand off the original request with observed
-attempts; refusals and denied permissions never trigger a bypass.
-
-Run the actual new paths with:
-
-```sh
-python3 -m tests.live_controller_eval   # HTTP conversation/action/routing checks
-python3 -m tests.live_worker_eval       # independent coding outcomes
-python3 -m tests.live_pipeline_eval     # controller → worker → report, chat during work
-python3 -m tests.live_integration_eval  # independent integration acceptance cases
-```
-
-These use disposable state and fixtures. The controller evaluation does not run
-the integration/research tasks it dispatches. The older `claire2 bench` remains
-available for comparisons with its legacy prompt. See `CLAIRE_ROUTING_REVIEW.md`
-for measurements, the model choice and practical limits.
-
-**Habits.** Ask Claire to make something a habit ("every weekday at nine, give
-me a brief") and she creates a recurring job, after you approve it. Each run is
-an ordinary task thread that keeps its result in its own chat, listed with its
-project and on the command center. Jobs are hers, kept in her own
-database and listed by `claire2 schedules` and in the app; nothing is added to
-the system crontab. They run only while the service is running, so
-`claire2 autostart on` starts it at login. A job that came due while the service
-was down runs once when it returns if it is under 12 hours late; a job never
-overlaps its own previous run; and a job cannot fire more often than every ten
-minutes.
-
-**Connectors.** `claire2 connectors add gmail|calendar|mcp|api` connects an
-outside service. Gmail and Calendar sign in through your browser and are
-read-only. MCP reaches anything that has an MCP server, local or remote. `api`
-is any HTTPS API with a token. The model never holds a credential: it names a
-connector and an action, and the backend attaches the token, which lives in the
-macOS keychain where nothing Claire runs can read it. A connector can only talk
-to the host it was set up for. Reading goes ahead; anything that changes data
-outside this machine asks you first, and every MCP tool asks unless you listed
-it as allowed. What comes back is marked as outside data, not instructions.
-Gmail and Calendar need an OAuth client of your own from the Google Cloud
-console ("Desktop app").
-
-**Roles and scouts.** `ROLES` in `config.py` maps each job to a model: the
-brain plans and writes, a scout reads, a clerk summarises. A role with no entry
-runs on the brain, so one model is enough to start. The `scout` tool hands
-files or a web page to the scout model with one question and returns a short
-cited report, so the text itself never enters the brain's context; several
-bundles are read at once. Give a role a `gguf` and a `port` and its server is
-started on first use.
-
-**Report card.** `claire2 bench` runs a model through Claire's own loop on
-small fixed tasks with checkable outcomes (a failing test, a docstring the code
-does not honour, a rename with a decoy, a question about a file that does not
-exist, a data task, a one-line change, a question about an unfamiliar project)
-and records pass or fail, steps, malformed replies and tokens per second.
-`claire2 bench scout` does the same for the scout role. Use `--api URL` to test
-a model before touching `config.py`, and `claire2 bench --history` to compare.
-The task prompts never contain what the checks look for; keep it that way when
-adding tasks to `claire_core/bench.py`.
-
-**Layout.** One module per job in `claire_core/`: `engine.py` (the loop),
-`protocol.py` (XML parsing), `llm.py` (model roles), `guard.py` (sandbox and
-command rules), `vault.py` (memory), `projects.py` (projects and where work is filed), `store.py` (threads, approvals, tool
-health), `hub.py` and `service.py` (threads and the local API), `render.py` and
-`cli.py` (the terminal), `web/` (the app). A new built-in tool is one file in
-`claire_core/tools/` with a `TOOLS` list, plus its doc in
-`claire_core/prompts/tools/`; the system prompt's tool section is generated.
-
-Tests: `python3 -m unittest discover -s tests -t .`
-
----
-
-## Requirements
-
-- **Python 3.9+**
-- **A GGUF model file.** Anything compatible with llama.cpp works. This was
-  built and tested against `Qwen3.8-27B-Uncensored-Q4_K_M.gguf`, but any
-  reasonably capable instruct/coder model will work — smaller models will be
-  less reliable at following the tool-call format.
-- **llama.cpp**, specifically `llama-server` — the part of llama.cpp that
-  serves an OpenAI-compatible API. This is the only supported backend: it's
-  the one that honours per-request "thinking on/off," which Claire depends on
-  to stay fast on simple steps and only pay for deep reasoning when a step
-  actually fails. LM Studio can serve the same model but ignores that flag
-  ([bug #1990](https://github.com/lmstudio-ai/lmstudio-bug-tracker/issues/1990)),
-  so reasoning mode can't be toggled per-request there.
-
----
-
-## 1. Clone it
+### 1. Clone the repository
 
 ```bash
-git clone <your-repo-url> claire
-cd claire
+git clone https://github.com/SohamNehra/Claire-V2.git
+cd Claire-V2
 ```
 
-## 2. Get llama-server running
+Follow the startup instructions for your operating system from this folder.
+Choose your own model before chatting: the profiles in `config.py` include
+machine-specific paths that may not exist on a fresh installation.
 
-### macOS
+### 2. Start on Windows
+
+Install LM Studio and download a language model in it. Then run these commands
+in PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\Setup Claire.ps1"
+& ".\Start Claire.cmd"
+```
+
+You can also double-click **Setup Claire.cmd** once, then **Start Claire.cmd**.
+Setup creates a project-local `.venv` and installs `tzdata` and `tzlocal` for
+Windows timezone support. It does not change the system execution policy.
+
+The launcher starts LM Studio's local server on `127.0.0.1:1234` if needed,
+starts Claire's background service, and opens the signed-in app in your browser.
+If Claire has no saved model choice and LM Studio has exactly one downloaded
+language model, that model is selected automatically. With several models,
+open **Models → Add model → LM Studio**, choose one, and use **Restart Claire
+now** before chatting.
+
+If LM Studio's CLI is unavailable, start its local server on port `1234` in
+LM Studio first, then run the Claire launcher again.
+
+Windows state and notes stay beside the clone in `.claire/` and
+`claire-vault/`. Desktop, Documents, and other standard folders are resolved
+through Windows, including OneDrive redirection.
+
+### 2. Start on macOS
+
+Check Python, then start LM Studio with a downloaded language model. Enable
+LM Studio's local server on `127.0.0.1:1234`. If its `lms` CLI is installed,
+you can start the server and list your downloaded model keys from Terminal:
+
+```bash
+python3 --version
+lms server start --port 1234 --bind 127.0.0.1
+lms ls
+```
+
+Register the model using the key LM Studio lists. Replace `YOUR_MODEL_KEY`
+below with that key:
+
+```bash
+./claire2 models add-lmstudio YOUR_MODEL_KEY --name "Local model" --context 32768
+./claire2 models use local-model
+./claire2 app
+```
+
+The add command prints the registered name; use that name if it differs from
+`local-model`. Set a smaller context if your model or available memory requires
+it. The Mac core uses Python's standard library and needs no pip installation.
+
+`./claire2 app` starts Claire in the background and opens the signed-in app.
+The service listens on **`http://127.0.0.1:8765`** by default. Model loading can
+take longer than the web page's startup.
+
+### Alternative: use llama.cpp on macOS
+
+To load a GGUF file directly instead of serving it through LM Studio, install
+llama.cpp and register the file:
 
 ```bash
 brew install llama.cpp
+./claire2 models add "/absolute/path/to/model.gguf" --name "Local GGUF" --context 32768
+./claire2 models use local-gguf
+./claire2 app
 ```
 
-This installs `llama-server` on your `PATH`, which is all the launcher script
-needs — it starts the server for you.
+Use the registered name printed by the add command. For a split GGUF, keep all
+parts together and select the file ending in `00001-of-…gguf`. The model choice
+overrides the saved runtime profiles, so you do not need to install Splash.
 
-### Windows
+Linux can run the core using Python and an appropriate local model server,
+but the Mac sandbox and native integrations are unavailable. The Windows
+launcher above is the native Windows path; WSL is not required for it.
 
-You have two options. **WSL is the easier, better-supported path** — Claire's
-launcher script is bash, and the sticky status bar and colored output rely on
-ANSI terminal escapes that a real POSIX terminal (or Windows Terminal) handles
-correctly.
+### 3. Check and manage the service
 
-**Option A — WSL (recommended)**
+Closing the browser leaves Claire running so tasks can finish. Use the
+launcher again to reopen the app with its sign-in link.
 
-1. Install WSL if you don't have it: `wsl --install` from an admin PowerShell,
-   then restart.
-2. Inside the WSL shell, follow the **macOS/Linux steps on this page exactly**
-   — install llama.cpp there (build from source, or grab a Linux release from
-   the [llama.cpp releases page](https://github.com/ggml-org/llama.cpp/releases)),
-   clone the repo inside WSL's filesystem, and run `claire` as normal.
-
-**Option B — native Windows (PowerShell / cmd), no WSL**
-
-1. Download a Windows build from the
-   [llama.cpp releases page](https://github.com/ggml-org/llama.cpp/releases)
-   (a `...-bin-win-*.zip` containing `llama-server.exe`), or build it yourself
-   with CMake. Put it somewhere on your `PATH`.
-2. The `claire` launcher script is bash and won't run natively here, so start
-   `llama-server` yourself instead of relying on autostart:
-
-   ```powershell
-   llama-server.exe --jinja -m C:\path\to\your-model.gguf -c 0 -ngl 999 --port 8080 --host 127.0.0.1
-   ```
-
-3. Run the agent directly with Python (see step 4 below) instead of via the
-   `claire` script.
-4. Use **Windows Terminal**, not the legacy `cmd.exe` console — the sticky
-   status bar and colored output need real ANSI escape support, which
-   Windows Terminal has on by default and the legacy console may not.
-
-## 3. Point it at your model
-
-Open `config.py` and set `MODEL_GGUF` to your model's path:
-
-```python
-MODEL_GGUF = "~/models/your-model.gguf"     # macOS/Linux/WSL, ~ is expanded
-MODEL_GGUF = "C:/models/your-model.gguf"    # native Windows, forward slashes are fine
-```
-
-That's the one line most people need to change. Everything else in
-`config.py` has a documented, sensible default — context window, GPU
-offload, host/port, timeouts, where memory is stored. Run:
+**macOS:**
 
 ```bash
-python3 config.py
+./claire2 status          # Service, model, and context information
+./claire2 app             # Open the app; start the service if needed
+./claire2 serve           # Run the service in the foreground
+./claire2 stop            # Stop Claire; leave the model loaded
+./claire2 stop --unload   # Stop Claire and unload her managed local models
 ```
 
-at any time to see what every setting currently resolves to, and whether the
-model file was actually found.
-
-## 4. Run it
-
-**macOS / Linux / WSL** — from the project directory:
-
-```bash
-./claire                       # interactive
-./claire "add tests for utils.py"    # one-shot
-```
-
-The `claire` script starts `llama-server` automatically if nothing is
-already listening on the configured port, then runs the agent. To run it
-from any directory without the `./`, symlink it onto your `PATH`:
-
-```bash
-ln -s "$(pwd)/claire" ~/.local/bin/claire
-```
-
-Then `cd` into whatever project you want it working on and just run `claire`
-— it can only read and write inside the directory you launch it from.
-
-**Native Windows (no WSL)** — with `llama-server.exe` already running from
-step 2:
+**Windows:**
 
 ```powershell
-python claire.py                       # interactive
-python claire.py "add tests for utils.py"   # one-shot
+powershell -NoProfile -ExecutionPolicy Bypass -File .\claire2.ps1 status
+powershell -NoProfile -ExecutionPolicy Bypass -File .\claire2.ps1 app
+powershell -NoProfile -ExecutionPolicy Bypass -File .\claire2.ps1 serve
+powershell -NoProfile -ExecutionPolicy Bypass -File .\claire2.ps1 stop
+powershell -NoProfile -ExecutionPolicy Bypass -File .\claire2.ps1 stop --unload
 ```
 
-There's no autostart on this path, so start the server first each time (or
-leave it running in its own window).
+macOS also supports `./claire2 autostart on` and `./claire2 autostart off` for
+login startup through launchd. Windows has no equivalent built-in login item.
 
----
+## Architecture
 
-## Usage
+Claire v2 separates the browser, local service, agent loop, and model runtime.
+The Python service owns the work; the web app displays its events and lets you
+send messages and answer approvals.
 
+```mermaid
+flowchart TD
+    Web[Browser app] --> Service[Local HTTP API]
+    CLI[Terminal service client] --> Service
+    Service --> Hub[Hub: chats and task queues]
+    Hub --> Controller[Controller: conversation and routing]
+    Hub --> Worker[Workers: coding and longer tasks]
+    Controller --> LLM[LLM client]
+    Worker --> LLM
+    LLM --> Runtime[LM Studio / llama.cpp / Splash]
+    Controller --> Tools[Tools, guards, and approvals]
+    Worker --> Tools
+    Hub --> Store[SQLite state]
+    Hub --> Vault[Markdown memory vault]
 ```
-claire                    interactive session
-claire "task"             one-shot: run the task, print the result, exit
-claire --yolo "task"      skip approval for shell commands (dangerous ones still prompt)
-claire --thinking "task"  start in deep-reasoning mode (slower, smarter)
-claire --model ID         use a different model than the one currently loaded
-```
 
-Interactive-only commands:
+1. **Conversation and routing.** A chat controller answers ordinary messages,
+   uses bounded local file actions, or starts a task with a brief, working
+   directory, and relevant skills. It uses schema-constrained JSON decisions
+   and a bounded recent conversation window; full history remains stored.
+2. **Task execution.** Workers run the agent loop with their project's memory
+   and tools. The loop calls the model, parses tool requests, checks access,
+   obtains approvals when required, and records results. Task reports return
+   to the chat that requested the work.
+3. **Live events.** The engine emits events instead of printing directly. The
+   hub schedules chat and task work, while the HTTP service streams activity
+   to the browser. Terminal rendering uses the same event structure. Terminal
+   task mode can also run the engine directly without the service.
+4. **Persistence.** SQLite holds threads, messages, events, approvals, schedules,
+   and tool health. The Markdown vault holds identity notes, project briefs,
+   work logs, learned notes, and task reports.
 
-| Command | Effect |
-|---|---|
-| `/t` | Toggle thinking mode (fast ↔ deep) |
-| `/y` | Toggle yolo mode (approval on ↔ off) |
-| `reset` | Clear the conversation, keep long-term memory |
-| `exit` / `quit` | Quit |
-| Ctrl-C | Interrupt the current task; the session stays open |
+One local model can handle every role. `ROLES` in `config.py` can assign
+separate conversation, scout, clerk, worker, or vision models. A role without
+its own model falls back to the main model. Model lifecycle code handles
+loading, optional preloading, idle release, and managed unloads.
 
-Environment variables override `config.py` for a single run without editing
-the file: `CLAIRE_API`, `CLAIRE_MODEL`, `CLAIRE_CTX`, `CLAIRE_THINKING=1`,
-`CLAIRE_YOLO=1`, `CLAIRE_VAULT`. For example:
+### Repository layout
+
+| Path | Responsibility |
+| --- | --- |
+| `claire2`, `claire2.ps1` | Mac/POSIX and Windows v2 launchers. |
+| `claire_core/cli.py`, `client.py`, `render.py`, `tui.py` | Terminal commands, service client, and rendering. |
+| `claire_core/service.py`, `hub.py` | Local HTTP API, browser authentication, events, thread queues, and approvals. |
+| `claire_core/engine.py`, `controller.py`, `protocol.py` | Agent loop, chat decisions, and tool-call parsing. |
+| `claire_core/llm.py`, `boot.py`, `power.py`, `splash.py` | Model requests, runtime startup, loading, and idle lifecycle. |
+| `claire_core/guard.py`, `host.py`, `resources.py` | Access rules, OS-specific paths, shell execution, and memory budgets. |
+| `claire_core/store.py`, `projects.py`, `vault.py`, `worklog.py` | Persistent state, project membership, and memory. |
+| `claire_core/scheduler.py` | Recurring jobs dispatched as ordinary tasks. |
+| `claire_core/tools/`, `prompts/`, `skills/` | Built-in tools, prompt components, and working procedures. |
+| `claire_core/connectors/`, `computer.py`, `vision.py` | External services and native Mac computer/vision capabilities. |
+| `claire_core/web/` | The browser app: plain HTML, CSS, and JavaScript. |
+| `config.py` | Runtime profiles and documented configuration. |
+| `tests/`, `scripts/` | Regression tests, live evaluations, and runtime utilities. |
+
+## Using Claire
+
+### Chats, projects, and tasks
+
+Start a chat from **New chat**, the command center, or a project page. Ask a
+question directly, or give Claire a task and an existing project folder, such
+as “Add tests for the parser in my project.” Longer work gets its own task
+thread, trace, and report. Approval requests appear in the app's Activity panel.
+
+![A Claire chat with task delegation and an approval request](docs/images/chat.png)
+
+A project can be a folder of work or a named group of chats. Tasks are filed
+under the project that owns their working directory; scratch and standard OS
+folders do not automatically become projects. Removing a project from the
+list keeps its folder and stored memory.
+
+The command center shows activity across projects, scheduled work, and task
+status. **Hide previous / Show previous** controls change sidebar visibility
+without deleting conversations or task history.
+
+![Claire's command center](docs/images/command-center.png)
+
+### Memory
+
+Each project has a vault folder containing:
+
+- `PROJECT.md`: what the project is and how work should be done there.
+- `work/`: a dated record of work as tasks start and finish.
+- `tasks/`: completed task reports.
+
+Chats and tasks receive their own project context and a compact shared memory
+index. `recall` retrieves detail by words or a note path. `MEMORY.md` is a
+generated index: edit the underlying notes rather than the index itself.
+
+The vault is plain Markdown and can be opened in Obsidian or another editor.
+Identity notes live under `identity/`; user skills live under `skills/`.
+
+![A project page with its brief and recent work](docs/images/project.png)
+
+### Skills and extensions
+
+Skills are Markdown instructions for particular kinds of work. Built-in
+procedures cover coding, debugging, testing, UAT, research, reviews, and
+integrations. Add or edit your own skills in the app or with
+`claire2 skills add FILE.md`. A user skill can override a built-in name.
+
+Tasks can start with named skills, load a skill with `use_skill`, or receive
+skills marked `always: true`. Frontmatter supports dependencies and routing
+metadata. Skill changes are picked up on the next turn; Python engine changes
+require a service restart. Skill selection is model-driven and can be imperfect.
+
+On a supported Mac sandbox, the workshop can execute model-written Python and
+register a tested tool. Broken tools are recorded in tool health and can leave
+repair notes in the inbox. Built-in tools cannot be replaced by workshop tools.
+Use `claire2 tools reset NAME` after repairing a broken tool.
+
+### Integrations and computer use
+
+The **Integrations** page connects supported services. Available providers
+include Google services, HTTPS APIs, and MCP servers. Google connections need
+your own OAuth client. The backend stores and attaches credentials; tool
+arguments do not give the model those credentials. External results are marked
+as untrusted data, and operations that change outside data require approval.
+
+macOS additionally supports Apple Notes, a dedicated Playwright browser, and
+native control of apps you explicitly allow. Native actions use scoped
+observations and verified receipts. Visual questions use a separately configured
+image-capable local model; listing Desktop files does not provide screen vision.
+
+Windows marks Mac-only integrations unavailable. It supports remote API and
+HTTP MCP connections, but the local sandboxed browser, stdio MCP, and workshop
+execution require the Mac sandbox. See [platform support](#platform-support-and-safety).
+
+### Scheduled work
+
+Ask Claire to create a recurring task, then approve the schedule. Each run is
+an ordinary task with its own trace and result. Schedules live in Claire's
+database, not the system crontab, and run only while her service is running.
+
+A job does not overlap itself or run more often than every ten minutes. After
+downtime, a missed job can run once if it is within the configured grace
+period; the shipped default is twelve hours.
+
+## Configuration
+
+### Models and roles
+
+Use **Models** in the app or `claire2 models` to register and select a model.
+Model choices are saved in `models.json` inside the state directory. A saved
+selection takes precedence over `config.py`; explicit API, model, or worker
+profile overrides take precedence over that selection.
+
+After changing the selected model, use **Restart Claire now**, or stop and
+start the service. The app restart waits for active work and attempts to
+unload managed models before switching. Added llama.cpp models use dedicated
+server ports starting at `8090`.
+
+`ROLES` can assign the main reasoning model, conversation controller, scouts,
+summary clerk, and vision specialists to different runtimes. The scout tool
+reads bundles of material with a question and returns a compact report. The
+worker receives its task brief and relevant project context without the whole
+chat's persona or global diary.
+
+The repository also includes Mac-specific Splash profiles and runtime tooling.
+Their model names, context settings, performance measurements, installation,
+and rollback instructions are in [CLAIRE_SPLASH_UPGRADE.md](CLAIRE_SPLASH_UPGRADE.md).
+
+### Storage locations
+
+| Data | macOS/default Python CLI | Windows launcher |
+| --- | --- | --- |
+| Threads, approvals, schedules, model registry, service token | `~/.claire/` | `<clone>/.claire/` |
+| Markdown memory vault | `~/claire-vault/` | `<clone>/claire-vault/` |
+| Service log | `~/.claire/service.log` | `<clone>/.claire/service.log` |
+
+`CLAIRE_STATE` and `CLAIRE_VAULT` override these locations. Use the Windows
+launcher consistently so commands target the same state directory as the app.
+Local state, vault notes, virtual environments, and temporary artifacts are
+excluded by `.gitignore`.
+
+### Important settings
+
+| Setting | Purpose |
+| --- | --- |
+| `SERVICE_PORT` / `CLAIRE_SERVICE_PORT` | Claire's loopback HTTP port; default `8765`. |
+| `ROLES`, `WORKER_PROFILE` | Model assignments and optional runtime profiles. |
+| `CONTROLLER_ENABLED`, `CONTROLLER_HISTORY_CHARS`, `CONTROLLER_MAX_STEPS` | Conversation routing and context/step limits. |
+| `WORKER_CONTEXT`, `MAX_TASK_WORKERS` | Worker context and task concurrency. |
+| `PRELOAD_MODEL` | Load the main model when the service starts. |
+| `MODEL_IDLE_SECONDS` / `CLAIRE_MODEL_IDLE_SECONDS` | Release managed models after inactivity; `0` keeps them loaded. |
+| `TEMPERATURE`, `THINKING` | Generation and reasoning defaults. |
+| `SANDBOX`, `APPROVAL_TIMEOUT` | Sandbox selection and approval expiry. |
+| `ROLES`, `VISION_UNLOAD_AFTER_USE`, `COMPUTER_MAX_STEPS` | Mac vision models and computer-use limits. |
+
+Other environment overrides include `CLAIRE_API`, `CLAIRE_MODEL`,
+`CLAIRE_WORKER_PROFILE`, `CLAIRE_THINKING`, and `CLAIRE_YOLO`. Restart the
+background service for changed configuration or environment settings to take
+effect. `python3 config.py` inspects the file-level configuration; use
+`claire2 status` and the app to check the running service and saved model choice.
+
+For the configured LM Studio Qwen3.8 27B mapping, ordinary mode sends
+`reasoning_effort: none`; deeper thinking defaults to `medium`.
+`CLAIRE_LMSTUDIO_REASONING_EFFORT=low|medium|xhigh` sets that deeper effort.
+Other models and runtimes can interpret reasoning controls differently.
+
+Idle release keeps the service and scheduler running. A new message or due
+job reloads its managed model when needed. Real activity keeps Claire awake;
+background status polling does not. Externally managed endpoints are left
+running. The current idle timeout is configured rather than fixed at thirty
+minutes.
+
+## Platform support and safety
+
+| Capability | macOS | Windows |
+| --- | --- | --- |
+| Local-model chat, project/task work, memory, and schedules | Available | Available |
+| Shell commands | POSIX shell, with Seatbelt when available | PowerShell, with approvals and pattern guards |
+| Standard folders | Mac folder layout | OS-known folders, including OneDrive redirection |
+| Remote API and HTTP MCP integrations | Available | Available |
+| Native Mac app controls and Apple Notes | Require setup and permissions | Unavailable |
+| Local sandboxed Browser/stdio MCP and workshop execution | Require the Mac OS sandbox | Unavailable |
+| Finder folder/model chooser and login autostart | Available | Use typed paths; no built-in login autostart |
+| Splash runtime | Optional Mac runtime | Unavailable |
+
+Safety is enforced at several levels:
+
+- **Access checks:** file tools resolve targets, block protected paths, and
+  constrain task file access to the assigned working directory. The chat's
+  bounded filesystem tool can browse non-secret directories outside a task;
+  file changes require a user-established target.
+- **OS isolation on macOS:** Seatbelt confines supported shell/tool processes.
+  Stricter workshop profiles restrict filesystem and network access.
+- **Command rules and approvals:** forbidden commands are refused, and commands
+  requiring review wait for approval. `--yolo` and the app's human-free mode
+  do not remove the forbidden list or the OS sandbox. Human-free mode still
+  retains approvals for destructive and other consequential actions.
+- **Local API protection:** the service binds to `127.0.0.1`, checks Host and
+  Origin, and requires authentication. The app exchanges its startup token
+  for an HttpOnly, SameSite cookie. A strict content security policy and text
+  rendering keep model output from becoming executable page markup.
+
+Windows and Linux have no equivalent OS sandbox in this implementation.
+Pattern guards and approvals do not provide kernel isolation. Native app
+control and visual screen access are separate from filesystem browsing.
+
+Credentials use the macOS keychain when available; the fallback secret backend
+uses a file in the state directory. See
+[Windows compatibility notes](docs/WINDOWS_COMPATIBILITY.md) for the verified
+Windows scope, regression results, and outstanding Mac acceptance checks.
+
+## Command reference
+
+On macOS, run these as `./claire2 …`. On Windows, pass the same arguments after
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\claire2.ps1`.
+
+| Command | Purpose |
+| --- | --- |
+| `app`, `status`, `serve`, `stop [--unload]` | Open, inspect, run, or stop the service. |
+| `home` | Use the persistent terminal conversation through the service. |
+| `"task"` | Run a task from the terminal in the current working directory. |
+| `tasks`, `approvals`, `inbox` | Inspect task results, pending decisions, and notes. |
+| `tools`, `tools reset NAME` | Inspect tool health or clear a repaired tool's fault. |
+| `models` | List registered models and the selection. |
+| `models add FILE.gguf`, `models add-lmstudio KEY` | Register a local file or LM Studio model. |
+| `models use NAME`, `models remove NAME` | Select or remove a registration. |
+| `skills`, `skills add FILE.md` | List or add working instructions. |
+| `connectors`, `schedules` | Manage connections and recurring work. |
+| `bench [brain\|scout]` | Evaluate a model on Claire's tasks. |
+| `autostart on\|off` | Configure login startup on macOS. |
+
+Use `--thinking` for deeper reasoning, `--model ID` for a model override, and
+`--worker-profile NAME` for a configured worker profile. In an interactive
+terminal session, `/t` toggles thinking, `/y` toggles automatic approval,
+`reset` clears that conversation, and `exit` or `quit` ends the session.
+
+## Development and testing
+
+The core and web app use no frontend framework or build step. Windows adds
+the timezone dependencies listed in `requirements-windows.txt`.
+
+Run the model-free regression suite:
 
 ```bash
-CLAIRE_CTX=65536 claire      # cap context for this run only
+python3 -m unittest discover -s tests -t . -q
 ```
 
----
+On Windows, use the project environment:
 
-## Safety
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -t . -q
+```
 
-- **File access is confined** to the directory you launched Claire from —
-  every path is resolved and checked; `../` escapes are refused.
-- **Shell commands stop for approval** by default (arrow keys or `y`/`n` to
-  answer, Enter confirms the highlighted choice). `--yolo` skips this, except
-  for commands matching a always-prompt pattern (`rm -rf`, `sudo`, `git push`,
-  `git reset --hard`, `curl | sh`, and similar) — those prompt no matter what.
-- Under `--yolo`, a command that would write **outside** the project
-  directory is refused outright rather than silently allowed, since nothing
-  can prompt you to catch it.
-- These are pattern matches, not a real sandbox. For genuinely untrusted
-  work, run Claire inside a VM or container.
-- If you're running an uncensored model, treat `--yolo` accordingly — use it
-  in throwaway directories and clean git working trees, not on anything you
-  can't restore.
+With Node.js installed, run the frontend contracts and syntax check:
 
----
+```bash
+node --check claire_core/web/app.js
+node tests/ui/frontend_checks.cjs
+```
 
-## Memory
+`tests/ui/run.sh` also drives the app against a scripted model in headless
+Chrome; it needs the browser and its Node tooling. The
+[platform workflow](.github/workflows/platform-tests.yml) runs regression and
+frontend checks on Windows and macOS. Platform-specific tests can be skipped
+when their OS feature or permission is unavailable; mocked contracts do not
+replace native acceptance testing.
 
-Claire keeps long-term notes as plain markdown in `~/claire-vault` (override
-with `CLAIRE_VAULT` or the `VAULT` setting in `config.py`). Open that folder
-as an Obsidian vault to read, edit, or delete anything she's remembered —
-she picks up your edits on the next run.
+Live evaluations are separate from unit tests. These scripts currently assume
+macOS temporary paths and runtime configuration; run them on a Mac with a
+configured local model:
 
----
+```bash
+python3 -m tests.live_controller_eval
+python3 -m tests.live_worker_eval
+python3 -m tests.live_pipeline_eval
+python3 -m tests.live_integration_eval
+```
+
+They exercise conversation routing, independent coding outcomes, worker
+reporting, and integration repair using disposable state and fixtures.
+`claire2 bench` records task outcomes and inference statistics; use `--history`
+to inspect earlier reports. Historical results are not guarantees for a new
+model or machine.
+
+A built-in tool lives in `claire_core/tools/`, exports a `TOOLS` list, and has
+its instructions under `claire_core/prompts/tools/`. The prompt's tool section
+is generated from the registry. Integration tests should check the request
+and response contract of every advertised action; offline fixture success is
+separate from verification against a real connected account.
 
 ## Troubleshooting
 
-Run `python3 config.py` first — it shows every setting, what it resolves to,
-whether the model file exists, and whether a server is currently reachable.
+Start with `claire2 status` using your OS launcher, then inspect `service.log`
+in the corresponding state directory.
 
-| Symptom | Likely cause |
-|---|---|
-| `ERROR: model not found at: ...` | Fix `MODEL_GGUF` in `config.py` |
-| `llama-server is not on your PATH` | Install llama.cpp, or set `AUTOSTART_SERVER = False` and run the server yourself |
-| Hangs / empty replies with `--thinking` off | Some backends ignore the "disable reasoning" flag — this project targets `llama-server` specifically for that reason |
-| Windows: sticky status bar looks broken/garbled | Use Windows Terminal, not the legacy `cmd.exe` console |
-| `cannot reach the model server` | `llama-server` isn't running, or `API_BASE`/`HOST`/`PORT` in `config.py` don't match where it's listening |
+| Problem | What to check |
+| --- | --- |
+| Splash runtime or an old model path is missing | Register your own model and select it before starting. The saved choice overrides the repository's runtime profiles. |
+| LM Studio is not answering | Start its local server on `127.0.0.1:1234`, check the downloaded model key, and rerun the launcher. |
+| Windows reports a missing Python environment | Run **Setup Claire.cmd**, then **Start Claire.cmd**. |
+| The model cannot load or generation is slow | Check runtime logs, available memory, and the selected model's context size. |
+| The app opens but this browser is not signed in | Reopen it through `claire2 app` or **Start Claire.cmd** to obtain the startup sign-in link. |
+| An old chat refers to a nonexistent Windows Desktop path | Restart Claire on the current code. Standard folders use OS discovery, including OneDrive redirection; `local_files` can report the current locations. |
+| A project path is refused | Check that it is an existing project directory, not a drive root, system folder, Claire's code/state, or a credential store. |
+| A Mac integration is unavailable on Windows | Check the platform support table; filesystem access does not enable native Mac app controls. |
+| The page and service appear to use different versions | Stop the service, start it again, and reload the page. |
+| Port `8765` is occupied | Check for an existing Claire service or change `SERVICE_PORT` / `CLAIRE_SERVICE_PORT`. |
 
-Directory locations and access are supplied by the runtime. Claire can inspect
-non-secret directory names without asking you to spell Desktop's absolute path.
-File changes retain their target and permission checks. Unsupported directory
-access claims can get one compact 27B specialist check; ordinary conversation
-returns to 9B on the next turn. Coding handoffs retain an existing project even
-if the controller omits the optional workdir argument. See
-[the navigation review](CLAIRE_NAVIGATION_REVIEW.md) and
-`tests/navigation_eval_results.json` for measured results and limitations.
+## Further documentation
 
-**Hide previous chats and tasks.** The sidebar has separate Hide previous /
-Show previous controls for conversations (under Chats) and finished tasks
-(under Projects; it applies inside every project); the Tasks page has the same
-task control. Visibility is remembered in this browser. The open chat,
-active work and approvals stay visible. New conversations and new activity in a
-hidden conversation appear automatically. Hiding changes the view, retaining
-stored conversations, task results and Claire's context.
+| Document | Contents |
+| --- | --- |
+| [Getting started](GETTING_STARTED.md) | Longer setup and usage walkthrough, with screenshots. |
+| [Windows compatibility](docs/WINDOWS_COMPATIBILITY.md) | Windows implementation, verified scope, platform limits, and release checks. |
+| [Routing review](CLAIRE_ROUTING_REVIEW.md) | Controller/worker design, evaluations, and model-role decisions. |
+| [Navigation review](CLAIRE_NAVIGATION_REVIEW.md) | Filesystem discovery, task handoffs, and measured limitations. |
+| [Splash runtime](CLAIRE_SPLASH_UPGRADE.md) | Mac runtime installation, model profiles, lifecycle, benchmarks, and rollback. |
+| [Computer use](CLAIRE_COMPUTER_UPGRADE.md) | Native Mac controls, visual specialists, receipts, and acceptance checks. |
+| [Tool review](CLAIRE_TOOL_REVIEW.md) | Tool contracts, reliability checks, and failure handling. |
+| [Reliability review](CLAIRE_RELIABILITY_REVIEW.md) | Reliability changes and evaluation notes. |
+| [Connector development](claire_core/connectors/README.md) | Connector architecture and extension details. |
+| [Frontend/backend handoff](FRONTEND_BACKEND_HANDOFF.md) | Web app and service interface details. |
 
-Idle sleep: after 30 minutes with no user activity and no queued/running work,
-Claire unloads her configured local models from RAM. Commands, tool calls and
-approval waits keep her awake until they finish. The service and scheduler stay
-running; a new message or due scheduled job reloads the model it needs. Browsing
-and typing in the app resets the idle timer, but background status polling does
-not. Merely viewing the app does not reload a sleeping model. Chats, memory and
-schedules remain on disk. Change `MODEL_IDLE_SECONDS` in `config.py` (or
-`CLAIRE_MODEL_IDLE_SECONDS` in the service environment); `0` disables sleep.
-Remote and externally managed model endpoints are left running. LM Studio uses
-its [model unload API](https://lmstudio.ai/docs/developer/rest/unload); standalone
-llama-server processes must exactly match Claire's configured command.
+### Legacy v1 terminal client
 
-
-**Computer use.** The `computer` tool operates allowed native Mac apps using
-scoped observations and control references. Browser tab creation/navigation and
-closure return verified receipts and track the tab this conversation created.
-Changed windows or tab lists stop the action. Native Accessibility reads avoid
-the System Events UI-tree bridge; keyboard/menu fallbacks remain available.
-A visible control lease keeps the display awake while GUI work runs and releases
-that assertion when the task ends.
-
-Visual questions use a separate, image-capable local model on demand: `vision`
-is the economical default; `vision_deep` is optional and requires enough free
-RAM. The text controller receives its observation rather than unreadable image
-bytes. Newly loaded vision models unload after use; coding stays on its existing
-model. Set `ROLES`, `VISION_UNLOAD_AFTER_USE`, and `COMPUTER_MAX_STEPS` in
-`config.py`. See [the computer-use review](CLAIRE_COMPUTER_UPGRADE.md) for the
-contracts, measured checks, and remaining limits.
+`claire.py` and the `claire` bash launcher remain in the repository for the
+original single-conversation terminal agent. They use `config.py` and a model
+endpoint, without the v2 web service's project/thread management. Existing v1
+users can continue with that client; the startup instructions in this README
+use **Claire v2** through `claire2` and the Windows launchers.

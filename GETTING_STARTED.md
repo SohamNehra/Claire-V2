@@ -1,5 +1,9 @@
 # Getting started with Claire
 
+For the current clone-and-start steps on either operating system, see the
+[README](README.md#clone-and-start). The walkthrough below focuses on macOS;
+native [Windows setup](#windows-with-lm-studio) is covered later in this guide.
+
 Claire is an AI assistant that runs entirely on your own Mac. The model, your
 chats, her memory and every file she touches stay on your machine. There is no
 cloud API, no account and no per-token cost. You talk to her in a local web app;
@@ -31,8 +35,8 @@ there is no `pip install` and no virtual environment.
 ## 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/claire.git
-cd claire
+git clone https://github.com/SohamNehra/Claire-V2.git
+cd Claire-V2
 ```
 
 Everything below is run from this folder.

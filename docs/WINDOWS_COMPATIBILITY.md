@@ -59,16 +59,23 @@ shell path and native Mac integration code remain in place; native `mac.py`,
 `mac_ax.py`, Apple Notes and Splash runtime code were not changed by this pass.
 Path display normalization leaves existing POSIX paths unchanged.
 
-There was no connected Mac or original repository history. The source snapshot
+The initial audit had no connected Mac or original repository history. The source snapshot
 under `.cache/before-windows-compat-20261117-171802/` records the state before
 this audit, after the initial Windows startup work. The review patch compares
 against that snapshot and excludes local state and model weights.
 
-`.github/workflows/platform-tests.yml` is prepared to run the suite and frontend
-contracts on both `windows-latest` and `macos-latest` after upload to a repository.
-It has **not run on GitHub or a real Mac yet**. Before claiming Mac/Windows
-release readiness, require both CI jobs and a real Mac acceptance check for
-model loading, shell approvals and native app/browser control.
+`.github/workflows/platform-tests.yml` runs the suite and frontend contracts on
+both `windows-latest` and `macos-latest`. The first GitHub Windows job passed.
+The first Mac run executed 512 tests: 503 passed, eight were skipped, and one
+new Windows-simulation test failed. That test incorrectly constructed its
+Windows fixture with the host Mac's POSIX path separators. The fixture now
+uses `ntpath` explicitly on every host; the test stays enabled, and this fix
+does not change application runtime code.
+
+Check the [platform workflow](https://github.com/SohamNehra/Claire-V2/actions/workflows/platform-tests.yml)
+for results on the current commit. Passing CI still needs to be supplemented
+with native Mac acceptance checks for model loading, shell approvals and
+app/browser control before claiming full release readiness.
 
 ## Explicit Windows limits
 

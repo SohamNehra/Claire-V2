@@ -1,5 +1,6 @@
 """Cross-platform contracts plus actual Windows known-folder acceptance."""
 import os
+import ntpath
 import sys
 import tempfile
 import unittest
@@ -26,7 +27,9 @@ class HostContracts(unittest.TestCase):
             self.assertEqual(host.user_file_roots(), (os.path.realpath(home), '/private/tmp', '/private/var/folders'))
 
     def test_windows_uses_redirected_unicode_folders_without_guessing_onedrive_name(self):
-        desktop = os.path.join(os.path.expanduser('~'), 'OneDrive - Example', 'Bureau Δ')
+        # This simulates Windows on every CI host. Its fixture must use Windows
+        # paths even when the test itself is running on macOS.
+        desktop = ntpath.join(r'C:\Users\fixture', 'OneDrive - Example', 'Bureau Δ')
         with patch.object(host, 'sys', SimpleNamespace(platform='win32')), \
                 patch.object(host, 'windows_known_folder', return_value=desktop):
             known = host.locations()
