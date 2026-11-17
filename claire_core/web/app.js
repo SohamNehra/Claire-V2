@@ -397,6 +397,18 @@ function prose(text) {
       }
       while (code.length && !code[code.length - 1].trim()) code.pop();
       root.append(el("pre", {}, el("code", { text: code.join("\n") })));
+    } else if (/^\s*\|/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-{3,}/.test(lines[i + 1])) {
+      // A markdown table: header row, separator row, body rows.
+      const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      const align = cells(lines[i + 1]).map((c) => (c.endsWith(":") ? "right" : ""));
+      const head = cells(line);
+      i += 2;
+      const body = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) body.push(cells(lines[i++]));
+      const cell = (tag, text, k) => el(tag, { class: align[k] === "right" ? "num" : null }, inline(text));
+      root.append(el("div", { class: "md-table-wrap" }, el("table", { class: "md-table" },
+        el("thead", {}, el("tr", {}, head.map((h, k) => cell("th", h, k)))),
+        el("tbody", {}, body.map((r) => el("tr", {}, r.map((c, k) => cell("td", c, k))))))));
     } else if (/^#{1,6}\s/.test(line)) {
       root.append(el("h3", {}, inline(line.replace(/^#{1,6}\s+/, ""))));
       i++;
@@ -415,7 +427,7 @@ function prose(text) {
     } else {
       const para = [];
       while (i < lines.length && lines[i].trim() && !lines[i].trim().startsWith("```")
-             && !isList(lines[i]) && !/^#{1,6}\s/.test(lines[i])) {
+             && !isList(lines[i]) && !/^#{1,6}\s/.test(lines[i]) && !/^\s*\|/.test(lines[i])) {
         para.push(lines[i++].trim());
       }
       root.append(el("p", {}, inline(para.join(" "))));
@@ -1252,9 +1264,14 @@ function render() {
   crumb.replaceChildren();
   if (overview) {
     $("title").textContent = "Command center";
-    const where = new Set(running.map((t) => t.project || "-")).size;
+    // Say what is actually happening: running, queued, or waiting for you.
+    const count = (status) => running.filter((t) => t.status === status).length;
+    const busyNow = running.length - count("queued") - count("waiting");
+    const projectsBusy = new Set(running.map((t) => t.project).filter(Boolean)).size;
+    const parts = [busyNow && `${busyNow} running`, count("queued") && `${count("queued")} queued`,
+                   count("waiting") && `${count("waiting")} waiting for you`].filter(Boolean);
     $("subtitle").textContent = running.length
-      ? `${running.length} task${running.length === 1 ? "" : "s"} running in ${where} ${where === 1 ? "place" : "places"}`
+      ? parts.join(", ") + (projectsBusy ? ` across ${projectsBusy} project${projectsBusy === 1 ? "" : "s"}` : "")
       : "Everything Claire is working on, in every project";
     dashboard();
   } else if (current) {

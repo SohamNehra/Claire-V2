@@ -650,9 +650,16 @@ class Hub:
                 self.publish({"type": "notice", "thread": tid, "ts": time.time(), "level": "info",
                               "text": "Skills loaded: " + ", ".join(picked)})
         turn_start_index = len(session.messages)
+        session.defer_failure_answer = session.profile == "controller"
+        session._deferred_answer = None
         outcome = session.run(text, preface=preface, reset_cancel=False)
         if session.profile == "controller" and outcome["status"] in ("error", "stopped"):
-            outcome = self._escalate_controller(session, text, outcome, turn_start_index)
+            recovered = self._escalate_controller(session, text, outcome, turn_start_index)
+            if recovered is outcome and session._deferred_answer:
+                # Nothing was handed on: show what went wrong after all.
+                self.publish({"type": "answer", "thread": tid, "ts": time.time(),
+                              "text": session._deferred_answer})
+            outcome = recovered
         status, answer = outcome["status"], outcome["answer"]
 
         if row["kind"] == "home":

@@ -536,6 +536,7 @@ class Session:
         self.messages.append({"role": "user", "content": _content(text, images)})
         bad_parses = 0
         failures_in_a_row = 0
+        same_call = (None, 0)     # (the exact call and its result, how many times in a row)
         outcomes = []             # actual receipts, never model descriptions of them
         self._turn_outcomes = outcomes
         self._local_read_chars = 0
@@ -789,6 +790,37 @@ class Session:
                 result_text, failed, fault = self._execute(name, args)
                 acted = True
                 outcomes.append((name, args, result_text, failed))
+                # The exact same call with the exact same result, again and
+                # again: at temperature 0 the same context gives the same next
+                # step, so a stuck thread stays stuck. The third time, say so
+                # in the result (which also changes what the model sees); the
+                # fourth time, stop and report honestly.
+                key = json.dumps([name, args, result_text], sort_keys=True, default=str)
+                same_call = (key, same_call[1] + 1 if same_call[0] == key else 1)
+                if getattr(self, "_result_images", None):
+                    same_call = (None, 0)    # a fresh screenshot each time: watching, not stuck
+                if same_call[1] == 3:
+                    result_text += (f"\n\n[You have now made exactly this call {same_call[1]} times "
+                                    f"and got exactly this result each time. Running it again will not "
+                                    f"change anything. Use what it showed you and take the next step, "
+                                    f"or finish and report what blocks you.]")
+                if same_call[1] >= 4:
+                    first = next((l for l in result_text.splitlines()[::-1] if l.strip()), "")[:300]
+                    answer = (f"I stopped: I ran the same `{name}` step {same_call[1]} times in a row "
+                              + (f"and it failed the same way each time ({first}). " if failed else
+                                 "with the same result each time, without moving on. ")
+                              + "Repeating it will not help. Changes made before that are still "
+                              "in the working folder; this needs a different approach.")
+                    self.messages.append({"role": "user", "content": f"[{name} result]\n{result_text}"})
+                    self.messages.append({"role": "assistant", "content": answer})
+                    self.emit("tool_result", name=name, first=(result_text.splitlines() or [""])[0][:300],
+                              failed=failed, fault=bool(fault))
+                    self.emit("notice", level="warn", text=f"stopped repeating the same {name} step")
+                    if self.profile == "controller" and getattr(self, "defer_failure_answer", False):
+                        self._deferred_answer = answer
+                    else:
+                        self.emit("answer", text=answer)
+                    return self._end("stopped", answer)
                 if failed:
                     boost_left = max(boost_left, 2)   # a failing step earns more thought
                     failures_in_a_row += 1
@@ -815,7 +847,13 @@ class Session:
                 if self.profile == "controller" and failed and failures_in_a_row >= 2:
                     answer=controller.grounded_fallback(self,outcomes)
                     self.messages.append({'role':'assistant','content':answer})
-                    self.emit('answer',text=answer)
+                    if getattr(self, "defer_failure_answer", False):
+                        # The hub may still hand the request to a worker; it shows
+                        # this only if it does not, so sir is not told it failed
+                        # just before being told it is under way.
+                        self._deferred_answer = answer
+                    else:
+                        self.emit('answer',text=answer)
                     return self._end("stopped",answer)
             self._save()
 

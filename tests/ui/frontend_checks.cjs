@@ -80,6 +80,18 @@ check("historyVisible(S.threads.get('old-chat'))",true);
 check("historyVisible(S.threads.get('old-task'))",true);
 check("Object.keys(historyPreference({good:1,bad:'yes',invalid:-1})).join(',')",'good');
 vm.runInContext('S.threads.clear();S.approvals.clear();hiddenThreadHistory={chats:{},tasks:{}}',ctx);
+// Markdown tables become tables; cell text is never markup.
+vm.runInContext(`
+  function fakeEl(tag){ return {tag, nodeType:1, children:[], className:'', attrs:{}, text:'', append(...k){ this.children.push(...k.flat()); },
+    setAttribute(k,v){ this.attrs[k]=v; }, addEventListener(){}, set textContent(v){ this.text=v; }, get textContent(){ return this.text; } }; }
+  document.createElement = fakeEl;
+  document.createTextNode = (t) => ({ nodeType: 3, text: t });
+  const flat = (n) => [n.tag, ...(n.children || []).flatMap(c => c.nodeType === 3 ? [c.text] : flat(c))];
+  globalThis.__table = flat(prose("Results:\\n\\n| Product | Growth |\\n|---|---:|\\n| Notebook <b>Pro</b> | +91.9% |\\n\\nDone."));
+`, ctx);
+check("__table.includes('table') && __table.includes('th') && __table.includes('td')", true);
+check("__table.includes('Notebook <b>Pro</b>')", true);
+check("__table.filter(x => x === 'b').length", 0);
 // Projects: what counts as active work, and the remembered folder state.
 check("isActive({kind:'task',status:'waiting'})",true);
 check("isActive({kind:'task',status:'done',busy:true})",true);

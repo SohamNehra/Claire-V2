@@ -487,6 +487,26 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(tasks[0]["parent"], "home")
         self.assertIn("Find the cause of the parser crash", self.env.core.vault.work.context())
 
+    def test_a_failed_attempt_that_is_handed_on_shows_only_the_handoff(self):
+        bad = decision("local_files", action="list_directory", kind="all")      # no path: fails
+        self.env.llm.replies = [bad, bad]
+        with patch.object(self.hub, "resolve_workdir", return_value=(self.env.work, None)), \
+             patch.object(self.hub, "post"):
+            self.hub._run_turn("home", "fix the parser in my project", 1)
+        answers = [e["text"] for e in self.env.events if e["type"] == "answer"]
+        self.assertEqual(len(answers), 1, answers)
+        self.assertIn("handed this to the coding worker", answers[0])
+        self.assertEqual(len(self.env.core.store.threads(kind="task")), 1)
+
+    def test_a_failed_attempt_that_is_not_handed_on_still_says_what_went_wrong(self):
+        bad = decision("local_files", action="list_directory", kind="all")
+        self.env.llm.replies = [bad, bad]
+        with patch.object(self.hub, "resolve_workdir", return_value=(None, "no folder")):
+            self.hub._run_turn("home", "list that folder", 1)
+        answers = [e["text"] for e in self.env.events if e["type"] == "answer"]
+        self.assertEqual(len(answers), 1, answers)
+        self.assertIn("could not complete", answers[0])
+
     def test_refusal_is_not_escalated_to_bypass_it(self):
         s = self.home()
         start = len(s.messages)

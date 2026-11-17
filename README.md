@@ -46,35 +46,9 @@ Follow the startup instructions for your operating system from this folder.
 Choose your own model before chatting: the profiles in `config.py` include
 machine-specific paths that may not exist on a fresh installation.
 
-### 2. Start on Windows
+### 2. Start Claire
 
-Install LM Studio and download a language model in it. Then run these commands
-in PowerShell:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\Setup Claire.ps1"
-& ".\Start Claire.cmd"
-```
-
-You can also double-click **Setup Claire.cmd** once, then **Start Claire.cmd**.
-Setup creates a project-local `.venv` and installs `tzdata` and `tzlocal` for
-Windows timezone support. It does not change the system execution policy.
-
-The launcher starts LM Studio's local server on `127.0.0.1:1234` if needed,
-starts Claire's background service, and opens the signed-in app in your browser.
-If Claire has no saved model choice and LM Studio has exactly one downloaded
-language model, that model is selected automatically. With several models,
-open **Models → Add model → LM Studio**, choose one, and use **Restart Claire
-now** before chatting.
-
-If LM Studio's CLI is unavailable, start its local server on port `1234` in
-LM Studio first, then run the Claire launcher again.
-
-Windows state and notes stay beside the clone in `.claire/` and
-`claire-vault/`. Desktop, Documents, and other standard folders are resolved
-through Windows, including OneDrive redirection.
-
-### 2. Start on macOS
+#### macOS (with LM Studio)
 
 Check Python, then start LM Studio with a downloaded language model. Enable
 LM Studio's local server on `127.0.0.1:1234`. If its `lms` CLI is installed,
@@ -103,7 +77,7 @@ it. The Mac core uses Python's standard library and needs no pip installation.
 The service listens on **`http://127.0.0.1:8765`** by default. Model loading can
 take longer than the web page's startup.
 
-### Alternative: use llama.cpp on macOS
+#### macOS with llama.cpp instead
 
 To load a GGUF file directly instead of serving it through LM Studio, install
 llama.cpp and register the file:
@@ -118,6 +92,34 @@ brew install llama.cpp
 Use the registered name printed by the add command. For a split GGUF, keep all
 parts together and select the file ending in `00001-of-…gguf`. The model choice
 overrides the saved runtime profiles, so you do not need to install Splash.
+
+#### Windows
+
+Install LM Studio and download a language model in it. Then run these commands
+in PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\Setup Claire.ps1"
+& ".\Start Claire.cmd"
+```
+
+You can also double-click **Setup Claire.cmd** once, then **Start Claire.cmd**.
+Setup creates a project-local `.venv` and installs `tzdata` and `tzlocal` for
+Windows timezone support. It does not change the system execution policy.
+
+The launcher starts LM Studio's local server on `127.0.0.1:1234` if needed,
+starts Claire's background service, and opens the signed-in app in your browser.
+If Claire has no saved model choice and LM Studio has exactly one downloaded
+language model, that model is selected automatically. With several models,
+open **Models → Add model → LM Studio**, choose one, and use **Restart Claire
+now** before chatting.
+
+If LM Studio's CLI is unavailable, start its local server on port `1234` in
+LM Studio first, then run the Claire launcher again.
+
+Windows state and notes stay beside the clone in `.claire/` and
+`claire-vault/`. Desktop, Documents, and other standard folders are resolved
+through Windows, including OneDrive redirection.
 
 Linux can run the core using Python and an appropriate local model server,
 but the Mac sandbox and native integrations are unavailable. The Windows
@@ -177,10 +179,16 @@ flowchart TD
    uses bounded local file actions, or starts a task with a brief, working
    directory, and relevant skills. It uses schema-constrained JSON decisions
    and a bounded recent conversation window; full history remains stored.
+   Code changes and figures computed from data (totals, averages, growth) always
+   go to a worker, which computes them with code rather than estimating. If a
+   quick attempt fails, the request is handed to a worker, and the chat shows
+   the handoff rather than the failed attempt.
 2. **Task execution.** Workers run the agent loop with their project's memory
    and tools. The loop calls the model, parses tool requests, checks access,
    obtains approvals when required, and records results. Task reports return
-   to the chat that requested the work.
+   to the chat that requested the work. A worker that repeats exactly the same
+   step with the same result is told so on the third time and stopped on the
+   fourth, with a report saying why; the chat can then retry with a clearer brief.
 3. **Live events.** The engine emits events instead of printing directly. The
    hub schedules chat and task work, while the HTTP service streams activity
    to the browser. Terminal rendering uses the same event structure. Terminal
@@ -221,7 +229,11 @@ question directly, or give Claire a task and an existing project folder, such
 as “Add tests for the parser in my project.” Longer work gets its own task
 thread, trace, and report. Approval requests appear in the app's Activity panel.
 
-![A Claire chat with task delegation and an approval request](docs/images/chat.png)
+![A chat where Claire hands a bug fix to a worker, notices it got stuck, retries with a clearer brief and reports the fix](docs/images/chat.png)
+
+Ask for figures and a worker computes them from the data with code:
+
+![Claire answers a sales question with exact figures computed from a CSV](docs/images/numbers.png)
 
 A project can be a folder of work or a named group of chats. Tasks are filed
 under the project that owns their working directory; scratch and standard OS
@@ -232,7 +244,7 @@ The command center shows activity across projects, scheduled work, and task
 status. **Hide previous / Show previous** controls change sidebar visibility
 without deleting conversations or task history.
 
-![Claire's command center](docs/images/command-center.png)
+![Claire's command center: one task running and two queued across three projects](docs/images/command-center.png)
 
 ### Memory
 
@@ -305,8 +317,8 @@ selection takes precedence over `config.py`; explicit API, model, or worker
 profile overrides take precedence over that selection.
 
 After changing the selected model, use **Restart Claire now**, or stop and
-start the service. The app restart waits for active work and attempts to
-unload managed models before switching. Added llama.cpp models use dedicated
+start the service. The app refuses to restart while a chat or task is still
+working, and unloads the models it manages before switching. Added llama.cpp models use dedicated
 server ports starting at `8090`.
 
 `ROLES` can assign the main reasoning model, conversation controller, scouts,

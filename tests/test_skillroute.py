@@ -85,12 +85,15 @@ class BudgetTests(unittest.TestCase):
         self.addCleanup(env.close)
         skill(env, "long-work", "Long work.", steps="6")
         load = "Need it.\n<use_skill>\n<name>long-work</name>\n</use_skill>"
-        busy = "Looking.\n<list_files>\n<path>.</path>\n</list_files>"
-        env.llm.replies = [load] + [busy] * 4 + [done()]
+        # Distinct steps: the same step over and over is stopped as a loop.
+        busy = ["Looking.\n<list_files>\n<path>" + p + "</path>\n</list_files>"
+                for p in (".", "./", "./.", "././", "./././", "./././/", "././././", "./././././",
+                          "././././/", "./././././/")]
+        env.llm.replies = [load] + busy[:4] + [done()]
         session = env.session()
         self.assertEqual(session.run("go")["status"], "done")       # 6 steps, though the cap is 3
         self.assertEqual(session.step_budget(), 6)
-        env.llm.replies = [busy] * 10
+        env.llm.replies = list(busy)
         plain = env.session()
         self.assertEqual(plain.run("go")["status"], "stopped")
         self.assertEqual(len(env.llm.calls) - 6, 3)                  # the usual cap without it

@@ -372,3 +372,49 @@ class WebApprovalTests(unittest.TestCase):
         with self.assertRaises(urllib.error.URLError):
             handler.redirect_request(req, None, 302, "Found", {}, "http://127.0.0.1:8765/shutdown")
         self.assertIsNotNone(handler.redirect_request(req, None, 302, "Found", {}, "https://example.org/"))
+
+
+class RepeatedFailureTests(unittest.TestCase):
+    def test_the_same_failing_call_is_flagged_then_stops_the_turn_and_says_why(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        same = call("read_file", path="missing.txt")
+        env.llm.replies = [same] * 6
+        outcome = env.session().run("Read missing.txt and summarise it.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertIn("4 times in a row and it failed the same way", outcome["answer"])
+        self.assertEqual(len(env.llm.calls), 4)          # no fifth, sixth... attempt
+        # The third time, the model was told that repeating it changes nothing.
+        self.assertIn("Running it again will not change anything", env.llm.calls[3]["messages"][-1]["content"])
+        self.assertTrue(any(e["type"] == "answer" and "stopped" in e["text"] for e in env.events))
+
+    def test_different_failing_calls_are_left_to_the_usual_nudge(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        env.llm.replies = [call("read_file", path=f"missing{i}.txt") for i in range(4)] + [done("Gave up.")]
+        self.assertEqual(env.session().run("Find the notes file.")["status"], "done")
+
+    def test_the_same_successful_call_over_and_over_also_stops(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        with open(os.path.join(env.work, "notes.txt"), "w") as f:
+            f.write("hello")
+        same = call("read_file", path="notes.txt")
+        env.llm.replies = [same] * 6
+        outcome = env.session().run("Summarise notes.txt.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertIn("with the same result each time, without moving on", outcome["answer"])
+        self.assertEqual(len(env.llm.calls), 4)
+
+    def test_a_nudged_thread_that_moves_on_finishes_normally(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        with open(os.path.join(env.work, "notes.txt"), "w") as f:
+            f.write("hello")
+        same = call("read_file", path="notes.txt")
+        env.llm.replies = [same, same, same, done("The notes say hello.")]
+        self.assertEqual(env.session().run("Summarise notes.txt.")["status"], "done")

@@ -10,7 +10,7 @@ cloud API, no account and no per-token cost. You talk to her in a local web app;
 she answers, and for real work (code, research, files) she starts a task that
 works in its own sandboxed folder and reports back.
 
-![A chat with Claire: she delegates work to a task and asks before a dangerous command](docs/images/chat.png)
+![A chat with Claire: she hands a bug fix to a worker, notices it got stuck, retries and reports the fix](docs/images/chat.png)
 
 This guide takes you from nothing to a working Claire in about 15 minutes, most
 of which is downloading a model.
