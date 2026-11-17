@@ -461,3 +461,32 @@ class StuckCycleTests(unittest.TestCase):
         self.assertIn("Files changed: f0.txt, f1.txt, f2.txt, f3.txt", outcome["answer"])
         warned = [m["content"] for m in env.llm.calls[-1]["messages"] if isinstance(m["content"], str)]
         self.assertTrue(any("3 steps left in this turn" in m for m in warned))
+
+
+class StallTests(unittest.TestCase):
+    """Found live: a worker wrote two files, then probed for 57 steps, each
+    command slightly different, so no repeat was ever exact."""
+
+    def test_steps_without_any_change_after_writing_are_nudged_then_stopped(self):
+        from tests.helpers import Env
+        from claire_core.engine import STALL_NUDGE, STALL_STOP
+        env = Env(max_steps=60)
+        self.addCleanup(env.close)
+        probes = [call("run_command", command=f"python3 -c 'print({i})'") for i in range(40)]
+        env.llm.replies = [call("write_file", path="hello.py", content="print('hi')")] + probes
+        outcome = env.session().run("Write hello.py and check it.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertIn(f"{STALL_STOP} steps passed without any further change", outcome["answer"])
+        self.assertIn("Files changed: hello.py", outcome["answer"])
+        self.assertEqual(len(env.llm.calls), 1 + STALL_STOP)
+        told = [m["content"] for m in env.llm.calls[STALL_NUDGE + 1]["messages"] if isinstance(m["content"], str)]
+        self.assertTrue(any("since you last changed a file" in m for m in told))
+
+    def test_exploring_before_any_change_is_not_counted(self):
+        from tests.helpers import Env
+        from claire_core.engine import STALL_STOP
+        env = Env(max_steps=60)
+        self.addCleanup(env.close)
+        reads = [call("run_command", command=f"python3 -c 'print({i})'") for i in range(STALL_STOP + 4)]
+        env.llm.replies = reads + [call("write_file", path="fix.py", content="x = 1"), done("Fixed.")]
+        self.assertEqual(env.session().run("Find and fix it.")["status"], "done")

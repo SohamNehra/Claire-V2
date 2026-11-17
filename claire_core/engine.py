@@ -86,6 +86,12 @@ def _content(text, images):
     return parts
 
 
+
+# A worker that has changed files and then runs this many steps without
+# changing anything is told to wrap up, and at the second number is stopped.
+STALL_NUDGE = 12
+STALL_STOP = 24
+
 class Core:
     """The shared parts every session is built from. One per process."""
 
@@ -540,6 +546,10 @@ class Session:
         # same since a file last changed (an edit resets it: re-running tests
         # after each edit is progress, re-running them with nothing changed is not).
         seen_since_change = {}
+        # Steps since the work last changed, counted once something has been
+        # changed: a worker that has written its files and then probes on and
+        # on (each probe slightly different) is stalled, not verifying.
+        steps_since_change = None
         outcomes = []             # actual receipts, never model descriptions of them
         self._turn_outcomes = outcomes
         self._local_read_chars = 0
@@ -801,6 +811,25 @@ class Session:
                 key = json.dumps([name, args, result_text], sort_keys=True, default=str)
                 if name in ("edit_file", "write_file") and not failed:
                     seen_since_change = {}
+                    steps_since_change = 0
+                elif steps_since_change is not None and self.profile != "controller":
+                    steps_since_change += 1
+                    if steps_since_change == STALL_NUDGE:
+                        result_text += (f"\n\n[{STALL_NUDGE} steps have passed since you last changed "
+                                        f"a file. If the work is done, finish now and report what you "
+                                        f"verified. If a result surprises you, say what you think the "
+                                        f"cause is and act on that, instead of probing further.]")
+                    if steps_since_change >= STALL_STOP:
+                        answer = (f"I stopped: {STALL_STOP} steps passed without any further change "
+                                  f"to the work, so I was no longer making progress. "
+                                  + self._progress_note(outcomes))
+                        self.messages.append({"role": "user", "content": f"[{name} result]\n{result_text}"})
+                        self.messages.append({"role": "assistant", "content": answer})
+                        self.emit("tool_result", name=name, first=(result_text.splitlines() or [""])[0][:300],
+                                  failed=failed, fault=bool(fault))
+                        self.emit("notice", level="warn", text="stopped: no progress since the last change")
+                        self.emit("answer", text=answer)
+                        return self._end("stopped", answer)
                 repeats = 0
                 if not getattr(self, "_result_images", None):    # a fresh screenshot each time: watching
                     repeats = seen_since_change[key] = seen_since_change.get(key, 0) + 1

@@ -84,6 +84,9 @@ from familiar logos. quality=fast is economical; quality=deep uses the larger vi
 model when RAM permits. click_at needs the observation from look and the observed
 0-1000 x/y coordinates; inspect and click by reference when labels are available.
 [task report] is a worker result: tell sir the outcome faithfully; do not start it again.
+A report that ended stopped or error is not done, whatever files exist: say it did not finish,
+what the report says was done, what was not verified, and offer the next step. Files being in
+place do not show that they work; only a check the worker actually ran does.
 [integration report] is a failure: delegate its repair with the error and current state.
 
 Tools (arguments is an object; every argument value is a string):
