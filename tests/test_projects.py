@@ -385,3 +385,28 @@ class DisplayNameTests(unittest.TestCase):
                              ("shop", "Shop"), ("iOS-app", "iOS App"), ("Claire-V2", "Claire V2"),
                              ("/x/local model", "Local Model"), ("/x/api/", "Api")):
             self.assertEqual(display_name(folder), name, folder)
+
+
+class HandoffFolderTests(unittest.TestCase):
+    def test_a_project_chat_hands_failed_work_to_the_project_folder(self):
+        from tests.test_controller import decision
+        env = Env()
+        self.addCleanup(env.close)
+        env.core.settings.controller_enabled = True
+        hub = Hub(env.core, start_brain=False)
+        self.addCleanup(hub.stop)
+        repo = folder(env, "invoices", git=True)
+        for sub in ("data", "tests"):
+            os.makedirs(os.path.join(repo, sub))
+        for rel in ("app.py", "data/x.json", "tests/test_app.py"):
+            open(os.path.join(repo, rel), "w").write("x")
+        project = env.core.projects.create("Invoices", repo)
+        chat = hub.new_chat(project=project["id"])["id"]
+        reads = [decision("local_files", action="read_text", path=os.path.join(repo, rel))
+                 for rel in ("app.py", "data/x.json", "tests/test_app.py")]
+        env.llm.replies = reads + [decision("local_files", action="list_directory", kind="all")] * 2
+        hub.post = lambda *a, **k: None          # the handed-on task is not run here
+        hub._run_turn(chat, "Invoice 2 total is wrong, find out why and fix it", 1)
+        task = env.core.store.threads(kind="task")[0]
+        self.assertEqual(task["workdir"], repo)
+        self.assertEqual(task["project"], project["id"])

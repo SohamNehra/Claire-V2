@@ -760,3 +760,12 @@ class BrowserCapabilityTests(unittest.TestCase):
         self.assertIn('No verified clicked action',controller.completion_issue(s,"I've filled the field and clicked Save.",outcomes))
         outcomes.append(('computer',{'action':'click'},receipt,False))
         self.assertIsNone(controller.completion_issue(s,"I've filled the field and clicked Save.",outcomes))
+
+
+class HandoffTitleTests(unittest.TestCase):
+    def test_a_handed_on_request_is_titled_by_its_first_sentence(self):
+        from claire_core.hub import task_title
+        self.assertEqual(task_title("A customer says invoice INV-1002 is wrong. We billed them 1,095.64."),
+                         "A customer says invoice INV-1002 is wrong")
+        long = task_title("Read that report and tell me what the quarterly numbers mean for our hiring plan")
+        self.assertTrue(long.endswith("…") and len(long) <= 61 and not long.startswith("Finish"))
