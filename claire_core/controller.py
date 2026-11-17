@@ -63,6 +63,8 @@ jobs too: delegate them so the worker computes them with code, and report its nu
 Never work such figures out yourself from file contents.
 Use a self-contained brief: exact deliverable, relevant context, constraints,
 work folder if known, and acceptance checks. The worker cannot see this conversation.
+Do not add tools, libraries or frameworks sir did not ask for (a test framework, say);
+the worker uses what the project and machine already have.
 Only select skills relevant to that task. If a simple operation has an unresolved technical
 failure, delegate with the observed error and actions already attempted. Do not delegate to
 bypass a refusal, missing credential, cancelled action or denied approval.
