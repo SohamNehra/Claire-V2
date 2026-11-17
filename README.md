@@ -4,6 +4,8 @@ Claire is a local AI assistant for coding, file work, and ongoing projects. You
 talk to her in a browser or terminal; she can inspect files, edit code, run
 approved commands, and delegate longer jobs to task threads that report back.
 
+![A chat in the Invoice Builder project: a customer's accountant says an invoice's tax is a cent short. Claire agrees, hands the fix to a worker, and reports it verified with a regression test](docs/images/chat.png)
+
 The model runs on your machine through **LM Studio**, **llama.cpp**, or the
 optional **Splash runtime on macOS**. The core assistant needs no cloud API key
 or hosted inference subscription. Chats, task history, and memory are stored
@@ -161,19 +163,27 @@ send messages and answer approvals.
 
 ```mermaid
 flowchart TD
-    Web[Browser app] --> Service[Local HTTP API]
-    CLI[Terminal service client] --> Service
-    Service --> Hub[Hub: chats and task queues]
-    Hub --> Controller[Controller: conversation and routing]
-    Hub --> Worker[Workers: coding and longer tasks]
-    Controller --> LLM[LLM client]
-    Worker --> LLM
-    LLM --> Runtime[LM Studio / llama.cpp / Splash]
-    Controller --> Tools[Tools, guards, and approvals]
-    Worker --> Tools
-    Hub --> Store[SQLite state]
-    Hub --> Vault[Markdown memory vault]
+    Web[Browser app] --> API[Local HTTP service]
+    Term[Terminal client] --> API
+    API --> Hub["Hub: thread queues, approvals, scheduler"]
+    Hub --> Threads
+    subgraph Threads["Threads"]
+        direction LR
+        Chat["Chat: the controller answers, or starts a task"] -->|brief| Task["Task: a worker runs the agent loop in its folder"]
+        Task -->|report| Chat
+    end
+    Threads --> Core
+    subgraph Core["Shared core"]
+        LLM[LLM client] --> Runtime[LM Studio / llama.cpp / Splash]
+        Tools[Tools, sandbox, and guards]
+        Store[(SQLite state)]
+        Vault[(Markdown memory vault)]
+    end
 ```
+
+Chats and tasks are both threads that run the same agent loop on one shared
+core; a chat runs it with the controller's rules and a task with a worker's.
+The scheduler starts tasks through the hub like any other request.
 
 1. **Conversation and routing.** A chat controller answers ordinary messages,
    uses bounded local file actions, or starts a task with a brief, working
@@ -234,18 +244,6 @@ question directly, or give Claire a task and an existing project folder, such
 as “Add tests for the parser in my project.” Longer work gets its own task
 thread, trace, and report. Approval requests appear in the app's Activity panel.
 
-![A chat in the Invoice Builder project: a customer's accountant says an invoice's tax is a cent short. Claire agrees, hands the fix to a worker, and reports it verified with a regression test](docs/images/chat.png)
-
-Ask for figures and a worker computes them from the data with code:
-
-![Claire answers a sales question with exact figures computed from a CSV](docs/images/numbers.png)
-
-Ask for something new and a worker builds it in its own folder:
-
-![A chat asking for a focus timer web app: Claire creates the folder, a worker builds it, and Claire reports what was made and checked](docs/images/build.png)
-
-![The focus timer Claire built, running in a browser with its keyboard shortcuts](docs/images/focus-timer.png)
-
 A project can be a folder of work or a named group of chats. Tasks are filed
 under the project that owns their working directory; scratch and standard OS
 folders do not automatically become projects. Removing a project from the
@@ -254,8 +252,6 @@ list keeps its folder and stored memory.
 The command center shows activity across projects, scheduled work, and task
 status. **Hide previous / Show previous** controls change sidebar visibility
 without deleting conversations or task history.
-
-![Claire's command center: one task queued and one waiting for approval across two projects. Human-free mode is on, and a browser script still waits for a yes](docs/images/command-center.png)
 
 ### Memory
 
@@ -271,8 +267,6 @@ generated index: edit the underlying notes rather than the index itself.
 
 The vault is plain Markdown and can be opened in Obsidian or another editor.
 Identity notes live under `identity/`; user skills live under `skills/`.
-
-![The Invoice Builder project page: its chats and tasks, PROJECT.md with a rule Claire was asked to remember, and the last task report](docs/images/project.png)
 
 ### Skills and extensions
 
