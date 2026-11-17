@@ -28,6 +28,14 @@ def scratch_base():
     return os.path.join(os.path.realpath(os.path.expanduser("~")), "claire-work")
 
 
+def display_name(path):
+    """A readable project name from its folder: "invoice-builder" becomes
+    "Invoice Builder". Words that already have capitals keep them ("iOS-app"
+    becomes "iOS App"), so a name someone chose on purpose is not mangled."""
+    words = os.path.basename(os.path.normpath(path)).replace("_", " ").replace("-", " ").split()
+    return " ".join(w[:1].upper() + w[1:] if w.islower() else w for w in words) or os.path.basename(path)
+
+
 class ProjectError(Exception):
     pass
 
@@ -97,7 +105,7 @@ class Projects:
         root = self.root_for(workdir)
         if not self._own_folder(root):
             root = workdir
-        return self.store.project_for_path(root) or self._add(os.path.basename(root), root)
+        return self.store.project_for_path(root) or self._add(display_name(root), root)
 
     # -- changing ------------------------------------------------------------
 
@@ -115,7 +123,7 @@ class Projects:
             for row in self.store.projects():
                 if row["path"] == path:
                     raise ProjectError(f"the project “{row['name']}” already uses that folder")
-        name = name or (os.path.basename(path) if path else "")
+        name = name or (display_name(path) if path else "")
         if not name:
             raise ProjectError("a project needs a name or a folder")
         return self._add(name, path)

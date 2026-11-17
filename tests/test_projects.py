@@ -41,7 +41,7 @@ class ProjectMemoryTests(unittest.TestCase):
         repo = folder(self.env, "shop", git=True)
         row = self.task_in(repo, "Fix checkout")
         project = self.core.store.project(row["project"])
-        self.assertEqual((project["name"], project["path"]), ("shop", repo))
+        self.assertEqual((project["name"], project["path"]), ("Shop", repo))
         brief = os.path.join(self.core.vault.path, "projects", project["slug"], "PROJECT.md")
         self.assertTrue(os.path.isfile(brief))
         # A second task deeper in the same repository joins the same project.
@@ -79,7 +79,7 @@ class ProjectMemoryTests(unittest.TestCase):
         self.assertIn("x" * 2000, own)
         shared = self.core.vault.work.context()
         self.assertIn("Fix checkout", shared)
-        self.assertIn("Project: shop", shared)
+        self.assertIn("Project: Shop", shared)
         self.assertNotIn("x" * 1000, shared)
 
     def test_worker_prompt_carries_its_project_memory_and_not_another(self):
@@ -89,7 +89,7 @@ class ProjectMemoryTests(unittest.TestCase):
         self.core.vault.remember("project", "Beta uses postgres.", workdir=b)
         row = self.task_in(a, "Ship alpha")
         prompt = self.hub._session(row["id"]).system_prompt()
-        self.assertIn("# Project: alpha", prompt)
+        self.assertIn("# Project: Alpha", prompt)
         self.assertIn("Alpha deploys with fly.", prompt)
         self.assertNotIn("postgres", prompt)
 
@@ -254,11 +254,11 @@ class ProjectServiceTests(ServiceCase):
         self.boot()
         repo = folder(self.env, "shop", git=True)
         made = self.client.post("/projects", {"path": repo})["project"]
-        self.assertEqual((made["name"], made["path"]), ("shop", repo))
+        self.assertEqual((made["name"], made["path"]), ("Shop", repo))
         group = self.client.post("/projects", {"name": "Reading list"})["project"]
         self.assertEqual(group["path"], "")
         names = [p["name"] for p in self.client.get("/projects")["projects"]]
-        self.assertEqual(sorted(names), ["Reading list", "shop"])
+        self.assertEqual(sorted(names), ["Reading list", "Shop"])
 
         chat = self.client.post("/threads", {"kind": "chat", "project": made["id"]})["thread"]
         self.assertEqual(chat["project"], made["id"])
@@ -311,7 +311,7 @@ class ProjectServiceTests(ServiceCase):
         self.wait_for(lambda e: e["type"] == "thread_status" and e["thread"] == task["id"]
                       and e["status"] == "running")
         active = self.client.get("/status")["active_work"]
-        self.assertEqual([(a["id"], a["project_name"]) for a in active], [(task["id"], "shop")])
+        self.assertEqual([(a["id"], a["project_name"]) for a in active], [(task["id"], "Shop")])
         self.assertEqual(self.client.get("/projects")["projects"][0]["active"], 1)
         gate.append(1)
         self.wait_for(lambda e: e["type"] == "turn_end" and e["thread"] == task["id"])
@@ -376,3 +376,12 @@ class NewFolderPathTests(NewFolderAndNoteTests):
         result = self.ask("Build it in a new folder called fresh-app", "fresh-app")
         self.assertTrue(result["failed"])
         self.assertFalse(os.path.exists(os.path.join(os.getcwd(), "fresh-app")))
+
+
+class DisplayNameTests(unittest.TestCase):
+    def test_folder_names_become_readable_without_mangling_chosen_capitals(self):
+        from claire_core.projects import display_name
+        for folder, name in (("invoice-builder", "Invoice Builder"), ("focus_timer", "Focus Timer"),
+                             ("shop", "Shop"), ("iOS-app", "iOS App"), ("Claire-V2", "Claire V2"),
+                             ("/x/local model", "Local Model"), ("/x/api/", "Api")):
+            self.assertEqual(display_name(folder), name, folder)

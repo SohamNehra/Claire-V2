@@ -92,9 +92,9 @@ try {
         `active ${await js("document.querySelector('#metric-active').textContent")}, total ${await js("document.querySelector('#metric-total').textContent")}, approval cards ${await js("document.querySelectorAll('#approvals .card').length")}`);
   check("the core reflects pending authorization", await js("document.querySelector('.dashboard').dataset.state === 'waiting'"));
   check("active work names the project each task belongs to",
-        await js("[...document.querySelectorAll('#task-board .task-project')].map(n => n.textContent).join() === 'uploader'"),
+        await js("[...document.querySelectorAll('#task-board .task-project')].map(n => n.textContent).join() === 'Uploader'"),
         await js("[...document.querySelectorAll('#task-board .task-row')].map(n => n.textContent).join(' | ')"));
-  check("the command center lists projects", await js("[...document.querySelectorAll('#project-board .project-card')].some(c => c.textContent.includes('uploader'))"));
+  check("the command center lists projects", await js("[...document.querySelectorAll('#project-board .project-card')].some(c => c.textContent.includes('Uploader'))"));
   await shot("0-command-center");
   check("there is no main chat, only chats", await js("!document.querySelector('.thread-row.main') && !document.querySelector('[data-view=\"thread:home\"]')"));
   await openDemo(); await sleep(500);
@@ -106,7 +106,7 @@ try {
         await js("document.querySelector('#approvals .what')?.textContent === 'rm -rf build' && document.querySelector('#approvals .flag')?.textContent === 'DANGEROUS'"));
   check("the tab title counts what is waiting", (await js("document.title")) === "(1) Claire");
   check("the sidebar files both tasks in their project folder",
-        await js("document.querySelectorAll('#side-threads .project').length === 1 && document.querySelector('.project .project-name .label').textContent === 'uploader' && document.querySelectorAll('.project .thread-row.task').length === 2"),
+        await js("document.querySelectorAll('#side-threads .project').length === 1 && document.querySelector('.project .project-name .label').textContent === 'Uploader' && document.querySelectorAll('.project .thread-row.task').length === 2"),
         `${await js("document.querySelectorAll('#side-threads .project').length")} projects, ${await js("document.querySelectorAll('.project .thread-row.task').length")} tasks inside`);
   check("no sideways overflow at 1440", (await overflow()) <= 0);
   await shot("1-home-dark");
@@ -119,7 +119,7 @@ try {
         `${await js("document.querySelectorAll('.step').length")} steps`);
   check("the failed step is marked", (await js("document.querySelectorAll('.step.failed').length")) === 1);
   check("the address is linkable", (await js("location.hash")).startsWith("#task/"));
-  check("the task's header leads back to its project", (await js("document.querySelector('#view-category .crumb-link')?.textContent")) === "uploader");
+  check("the task's header leads back to its project", (await js("document.querySelector('#view-category .crumb-link')?.textContent")) === "Uploader");
   await shot("2-task-dark");
 
   // -- panels
@@ -250,7 +250,7 @@ try {
   await js("document.querySelector('.project .project-add').click()"); await sleep(1000);
   const projectChat = await js("location.hash.startsWith('#chat/') ? decodeURIComponent(location.hash.slice(6)) : ''");
   check("a chat started in a project is filed there and says so",
-        !!projectChat && await js("document.querySelector('#view-category .crumb-link')?.textContent === 'uploader' && document.querySelector('#composer-scope').textContent === 'uploader' && document.querySelectorAll('.project .thread-row.chat').length === 1"));
+        !!projectChat && await js("document.querySelector('#view-category .crumb-link')?.textContent === 'Uploader' && document.querySelector('#composer-scope').textContent === 'Uploader' && document.querySelectorAll('.project .thread-row.chat').length === 1"));
   const filed = await js(`fetch('/threads/${projectChat}',{credentials:'same-origin'}).then(r=>r.json()).then(r=>r.thread.project)`);
   check("the service files the chat under the project", !!filed);
   await js("[...document.querySelectorAll('#head-tools button')].find(b => b.textContent === 'Move…').click()"); await sleep(400);
