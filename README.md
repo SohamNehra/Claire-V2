@@ -163,27 +163,30 @@ send messages and answer approvals.
 
 ```mermaid
 flowchart TD
-    Web[Browser app] --> API[Local HTTP service]
+    Web[Browser app] --> API["Local HTTP<br/>service"]
     Term[Terminal client] --> API
-    API --> Hub["Hub: thread queues, approvals, scheduler"]
+    API --> Hub["Hub: queues,<br/>approvals,<br/>scheduler"]
     Hub --> Threads
     subgraph Threads["Threads"]
         direction LR
-        Chat["Chat: the controller answers, or starts a task"] -->|brief| Task["Task: a worker runs the agent loop in its folder"]
+        Chat["Chat<br/>(controller)"] -->|brief| Task["Task<br/>(worker)"]
         Task -->|report| Chat
     end
     Threads --> Core
     subgraph Core["Shared core"]
-        LLM[LLM client] --> Runtime[LM Studio / llama.cpp / Splash]
-        Tools[Tools, sandbox, and guards]
-        Store[(SQLite state)]
-        Vault[(Markdown memory vault)]
+        LLM[LLM client] --> Runtime["LM Studio,<br/>llama.cpp,<br/>or Splash"]
+        Tools["Tools,<br/>sandbox,<br/>and guards"]
+        Store[("SQLite:<br/>chats, tasks,<br/>history")]
+        Vault[("Markdown<br/>memory vault")]
     end
 ```
 
 Chats and tasks are both threads that run the same agent loop on one shared
-core; a chat runs it with the controller's rules and a task with a worker's.
-The scheduler starts tasks through the hub like any other request.
+core; a chat runs it with the controller's rules (answer, or hand the work on)
+and a task with a worker's (do the work in its folder, then report). The
+scheduler starts tasks through the hub like any other request. SQLite is the
+record of what happened, so chats and task traces survive a restart; the
+Markdown vault is what Claire remembers and reads back as context.
 
 1. **Conversation and routing.** A chat controller answers ordinary messages,
    uses bounded local file actions, or starts a task with a brief, working
@@ -209,7 +212,7 @@ The scheduler starts tasks through the hub like any other request.
    to the browser. Terminal rendering uses the same event structure. Terminal
    task mode can also run the engine directly without the service.
 4. **Persistence.** SQLite holds threads, messages, events, approvals, schedules,
-   and tool health. The Markdown vault holds identity notes, project briefs,
+   projects, integrations, and tool health. The Markdown vault holds identity notes, project briefs,
    work logs, learned notes, and task reports.
 
 One local model can handle every role. `ROLES` in `config.py` can assign
