@@ -320,3 +320,52 @@ class ProjectServiceTests(ServiceCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NewFolderAndNoteTests(unittest.TestCase):
+    """Found by live runs: a task asked for in a new folder failed before the
+    folder was made; a note added to PROJECT.md merged into its last bullet."""
+
+    def setUp(self):
+        self.env = Env()
+        self.addCleanup(self.env.close)
+        self.env.core.settings.controller_enabled = True
+        self.hub = Hub(self.env.core, start_brain=False)
+        self.addCleanup(self.hub.stop)
+        self.chat = self.hub.new_chat()["id"]
+
+    def ask(self, text, workdir):
+        self.env.llm.replies = [decision("spawn_task", title="Build it", task="Build the app.", workdir=workdir),
+                                decision("done", summary="Done.")]
+        session = self.hub._session(self.chat)
+        session.sink = self.env.events.append
+        session.run(text)
+        return [e for e in self.env.events if e["type"] == "tool_result" and e["name"] == "spawn_task"][-1]
+
+    def test_a_new_folder_named_in_the_request_is_created_for_its_task(self):
+        target = os.path.join(self.env.root, "fresh-app")
+        result = self.ask(f"Build me a small app in a new folder {target}", target)
+        self.assertFalse(result["failed"])
+        self.assertTrue(os.path.isdir(target))
+        self.assertEqual(self.env.core.store.threads(kind="task")[0]["workdir"], os.path.realpath(target))
+
+    def test_a_folder_the_request_does_not_name_is_not_created(self):
+        target = os.path.join(self.env.root, "invented")
+        result = self.ask("Build me a small app somewhere sensible", target)
+        self.assertTrue(result["failed"])
+        self.assertFalse(os.path.exists(target))
+        self.assertEqual(self.env.core.store.threads(kind="task"), [])
+
+    def test_a_protected_place_is_never_created(self):
+        target = os.path.join(self.env.core.settings.state_dir, "sneaky")
+        result = self.ask(f"Build it in a new folder {target}", target)
+        self.assertTrue(result["failed"])
+        self.assertFalse(os.path.exists(target))
+
+    def test_a_note_after_a_list_starts_its_own_paragraph(self):
+        repo = folder(self.env, "shop")
+        project = self.env.core.projects.create("Shop", repo)
+        self.env.core.vault.write_project_brief(project["slug"], "# Shop\n\n- Uses Flask.\n")
+        self.env.core.vault.remember("project", "Amounts are in rupees.", folder=project["slug"], name="Shop")
+        brief = self.env.core.vault.project_brief(project["slug"])
+        self.assertIn("- Uses Flask.\n\nAmounts are in rupees.\n", brief)

@@ -45,6 +45,33 @@ def requested_workdir(session):
     return (roots[0] if roots else ''), None
 
 
+def _create_requested_folder(ctx, requested, title, problem):
+    """A new project folder sir asked for in so many words ("in a new folder
+    ~/code/app") is created when its task starts, rather than failing first.
+    Only one level, only a path his own message names, and only where a task
+    may work. Returns (workdir, problem, created)."""
+    session = ctx.session
+    text = getattr(session, "_active_request", "") or next(
+        (m["content"] for m in reversed(session.messages)
+         if m["role"] == "user" and isinstance(m["content"], str)), "")
+    raw = (requested or "").strip().rstrip("/\\")
+    if not raw or text.startswith(("[task report]", "[integration report]")):
+        return None, problem, ""
+    full = os.path.realpath(os.path.expanduser(raw))
+    named = raw in text or full in text or full.replace(os.path.expanduser("~"), "~", 1) in text
+    if not named or not os.path.isdir(os.path.dirname(full)) or os.path.exists(full):
+        return None, problem, ""
+    try:
+        os.mkdir(full)
+    except OSError as exc:
+        return None, f"could not create the folder {raw}: {exc.strerror or exc}", ""
+    workdir, refused = ctx.hub.resolve_workdir(full, title)
+    if refused:
+        os.rmdir(full)                        # not a place a task may work after all
+        return None, refused, ""
+    return workdir, None, full
+
+
 def spawn_task(ctx, args):
     title = " ".join((args.get("title") or "").split())
     task = (args.get("task") or "").strip()
@@ -68,12 +95,17 @@ def spawn_task(ctx, args):
     if not requested and project and project["path"] and os.path.isdir(project["path"]):
         requested = project["path"]          # a project chat's work happens in its folder
     workdir, problem = ctx.hub.resolve_workdir(requested, title)
+    created = ""
+    if problem and "not an existing folder" in problem:
+        workdir, problem, created = _create_requested_folder(ctx, requested, title, problem)
     if problem:
         return f"ERROR: {problem}"
     thread = ctx.hub.spawn_task(title, task, workdir, parent=ctx.thread_id,
                                 skills=wanted)
     filed = ctx.store.project(thread.get("project"))
-    return (f"Started task {thread['id']}: {title}\nWorking in {workdir}\n"
+    return (f"Started task {thread['id']}: {title}\n"
+            + (f"Created the new folder {created}\n" if created else "")
+            + f"Working in {workdir}\n"
             + (f"Project: {filed['name']}\n" if filed else "")
             + (f"Skills: {', '.join(wanted)}\n" if wanted else "")
             + f"Status: {thread['status']}. Its report will arrive here when it "

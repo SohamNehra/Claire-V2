@@ -465,14 +465,20 @@ class Vault:
             title = note
 
         new = not os.path.exists(path)
+        existing = ""
         if not new:
             with open(path, encoding="utf-8") as f:
-                if content in f.read():
-                    return f"Already in memory: {os.path.relpath(path, self.path)}"
+                existing = f.read()
+            if content in existing:
+                return f"Already in memory: {os.path.relpath(path, self.path)}"
+        # A note added to a file sir edited may follow a list item; without a
+        # blank line between them Markdown would fold the note into it.
+        lead = "" if not existing or existing.endswith("\n\n") else (
+            "\n" if existing.endswith("\n") else "\n\n")
         with open(path, "a", encoding="utf-8") as f:
             if new:
                 f.write(header or f"---\ntags: [claire, {kind}]\n---\n# {title}\n\n")
-            f.write(f"{content}\n\n")
+            f.write(f"{lead}{content}\n\n")
         rel = os.path.relpath(path, self.path)
         if kind == "project":
             self.project_work(folder).record(
