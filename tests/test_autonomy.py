@@ -72,6 +72,45 @@ class HumanFreeTests(unittest.TestCase):
         self.assertFalse(autonomy.HumanFree(self.env.core.settings).on())
 
 
+class DeclinedOnceTests(unittest.TestCase):
+    """Seen live: a worker whose browser script was not approved asked for a
+    different script tool, and the task waited out a second approval."""
+
+    def setUp(self):
+        self.env = Env()
+        self.addCleanup(self.env.close)
+        self.session = self.env.session()
+        self.session._declined = set()          # as at the start of a turn
+        self.ctx = ToolContext(self.session)
+        self.env.allow = False
+
+    def test_the_same_kind_of_action_on_the_same_service_is_not_asked_again(self):
+        self.assertFalse(self.ctx.ask("connector", "Browser: browser_evaluate\nruns a script", "MAJOR ACTION", always=True))
+        self.assertFalse(self.ctx.ask("connector", "Browser: browser_run_code_unsafe\nruns code", "MAJOR ACTION", always=True))
+        self.assertEqual(len(self.env.asked), 1)
+        self.assertTrue(any(e["type"] == "notice" and "not asked again" in e["text"] for e in self.env.events))
+
+    def test_another_service_or_kind_of_request_is_still_asked(self):
+        self.ctx.ask("connector", "Browser: browser_evaluate\nruns a script", "MAJOR ACTION", always=True)
+        self.ctx.ask("connector", "Mail: send\nsends an email", "MAJOR ACTION", always=True)
+        self.ctx.ask("command", "rm notes.txt", "DANGEROUS", always=True)
+        self.ctx.ask("command", "rm notes.txt", "DANGEROUS", always=True)
+        self.assertEqual(len(self.env.asked), 4)
+
+    def test_an_approval_is_not_remembered_and_a_new_turn_asks_again(self):
+        self.env.allow = True
+        self.assertTrue(self.ctx.ask("connector", "Browser: browser_evaluate", "MAJOR ACTION", always=True))
+        self.assertTrue(self.ctx.ask("connector", "Browser: browser_evaluate", "MAJOR ACTION", always=True))
+        self.assertEqual(len(self.env.asked), 2)
+        self.env.allow = False
+        self.ctx.ask("connector", "Browser: browser_evaluate", "MAJOR ACTION", always=True)
+        self.env.llm.replies = ["Done.\n<done>\n<summary>\nOK.\n</summary>\n</done>"]
+        self.session.run("Next request.")
+        self.assertEqual(self.session._declined, set())
+        self.ctx.ask("connector", "Browser: browser_evaluate", "MAJOR ACTION", always=True)
+        self.assertEqual(len(self.env.asked), 4)
+
+
 class ProjectsToolTests(unittest.TestCase):
     def setUp(self):
         self.env = Env()

@@ -89,7 +89,23 @@ class ToolContext:
                 self.session.emit("notice", level="info",
                                   text=f"Human-free mode: went ahead without asking: {first}")
                 return True
-        return self.session.ask({"kind": kind, "title": title, "flag": flag})
+        # Once sir has said no (or not answered) to a flagged action on a
+        # service, the same kind of action on it is not put to him again in
+        # this turn: seen live, a worker whose page script was not approved
+        # asked for another script tool, and the task waited out a second
+        # approval. A "no" is about the effect, not the tool's name.
+        service = (title or "").split(":", 1)[0].strip()
+        key = (kind, flag, service) if kind == "connector" and flag else None
+        declined = getattr(self.session, "_declined", None)
+        if key and declined is not None and key in declined:
+            self.session.emit("notice", level="info",
+                              text=f"not asked again: a {flag.lower()} on {service} was already "
+                                   f"declined in this turn")
+            return False
+        allowed = self.session.ask({"kind": kind, "title": title, "flag": flag})
+        if key and not allowed and declined is not None:
+            declined.add(key)
+        return allowed
 
 
 class Registry:

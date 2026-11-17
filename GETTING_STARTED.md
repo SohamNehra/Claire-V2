@@ -10,7 +10,7 @@ cloud API, no account and no per-token cost. You talk to her in a local web app;
 she answers, and for real work (code, research, files) she starts a task that
 works in its own sandboxed folder and reports back.
 
-![A chat with Claire: she hands a bug fix to a worker, notices it got stuck, retries and reports the fix](docs/images/chat.png)
+![A chat with Claire: a customer's accountant says an invoice's tax is a cent short. She agrees, hands the fix to a worker, and reports it verified](docs/images/chat.png)
 
 This guide takes you from nothing to a working Claire in about 15 minutes, most
 of which is downloading a model.
@@ -149,7 +149,7 @@ That choice takes precedence over `config.py`.
 
 ## Using Claire
 
-![The command center: tasks running in every project, and what is scheduled](docs/images/command-center.png)
+![The command center: work in every project at a glance, with an approval waiting in the Activity panel](docs/images/command-center.png)
 
 - **Chats.** Click **New chat**, or type on the command center. Ask questions
   directly. Give her real work ("add tests for utils.py in ~/code/app") and she
@@ -189,7 +189,9 @@ Claire can run commands, so she is boxed in by three layers:
 
 **Human-free mode** (the switch at the bottom of the sidebar) lets her go ahead
 without asking for ordinary steps, such as installing packages and browsing.
-She still asks before anything that deletes or is dangerous. Only you can turn
+She still asks before anything that deletes or is dangerous, such as running a
+script inside a web page. If you say no, or do not answer, she does not ask again
+for the same kind of action on that service in the same task. Only you can turn
 it on.
 
 ## Using LM Studio instead

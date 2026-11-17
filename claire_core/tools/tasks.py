@@ -4,6 +4,7 @@ import re
 import os
 import time
 import sys
+from decimal import Decimal, InvalidOperation
 
 from . import Tool
 from .. import host
@@ -73,12 +74,51 @@ def _create_requested_folder(ctx, requested, title, problem):
     return workdir, None, full
 
 
+# Decimal figures, with thousands commas; not version numbers like 3.12.1.
+_FIGURE = re.compile(r"(?<![\w.])\d[\d,]*\.\d+(?!\w|\.\d)")
+
+
+def _value(figure):
+    try:
+        return Decimal(figure.replace(",", "")).normalize()
+    except InvalidOperation:
+        return None
+
+
+def unsourced_figures(session, text):
+    """Decimal figures in a brief that neither sir nor any tool gave in this
+    chat. Seen live: the controller worked out "expected" totals for a brief
+    in its head, got them wrong, and handed them on as acceptance checks."""
+    seen = set()
+    for m in session.messages:
+        if m.get("role") != "user":
+            continue                  # sir, tool results and task reports; not its own words
+        body = m.get("content") or ""
+        if not isinstance(body, str):
+            body = " ".join(p.get("text", "") for p in body if p.get("type") == "text")
+        seen.update(v for v in map(_value, _FIGURE.findall(body)) if v is not None)
+    out = []
+    for figure in _FIGURE.findall(text):
+        value = _value(figure)
+        if value is not None and value not in seen and figure not in out:
+            out.append(figure)
+    return out
+
+
 def spawn_task(ctx, args):
     title = " ".join((args.get("title") or "").split())
     task = (args.get("task") or "").strip()
     if not task:
         return ("ERROR: <task> was empty. The task thread sees only what you "
                 "write there, so it needs the full brief.")
+    if ctx.session.profile == "controller":
+        unsourced = unsourced_figures(ctx.session, task)
+        if unsourced:
+            task += ("\n\n[Note from Claire: these figures in the brief were not given by sir "
+                     "or returned by a tool, so treat them as unverified and check the real "
+                     "values yourself: " + ", ".join(unsourced) + ".]")
+            ctx.session.emit("notice", level="info",
+                             text="the brief had figures no tool produced; the worker will check them")
     if not title:
         title = " ".join(task.split()[:8])
     store = ctx.session.core.skills

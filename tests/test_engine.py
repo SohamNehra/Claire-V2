@@ -384,7 +384,10 @@ class RepeatedFailureTests(unittest.TestCase):
         outcome = env.session().run("Read missing.txt and summarise it.")
         self.assertEqual(outcome["status"], "stopped")
         self.assertIn("4 times with nothing changing and it failed the same way", outcome["answer"])
-        self.assertEqual(len(env.llm.calls), 4)          # no fifth, sixth... attempt
+        # Four attempts, then one request for its closing report (here it tried
+        # the same call again, so it is not taken as a report and nothing runs).
+        self.assertEqual(len(env.llm.calls), 5)
+        self.assertIn("Repeating it will not help", outcome["answer"])
         # The third time, the model was told that repeating it changes nothing.
         self.assertIn("Running it again will not change anything", env.llm.calls[3]["messages"][-1]["content"])
         self.assertTrue(any(e["type"] == "answer" and "stopped" in e["text"] for e in env.events))
@@ -407,7 +410,7 @@ class RepeatedFailureTests(unittest.TestCase):
         outcome = env.session().run("Summarise notes.txt.")
         self.assertEqual(outcome["status"], "stopped")
         self.assertIn("getting the same result each time", outcome["answer"])
-        self.assertEqual(len(env.llm.calls), 4)
+        self.assertEqual(len(env.llm.calls), 5)
 
     def test_a_nudged_thread_that_moves_on_finishes_normally(self):
         from tests.helpers import Env
@@ -478,7 +481,7 @@ class StallTests(unittest.TestCase):
         self.assertEqual(outcome["status"], "stopped")
         self.assertIn(f"{STALL_STOP} steps passed without any further change", outcome["answer"])
         self.assertIn("Files changed: hello.py", outcome["answer"])
-        self.assertEqual(len(env.llm.calls), 1 + STALL_STOP)
+        self.assertEqual(len(env.llm.calls), 2 + STALL_STOP)    # and the closing-report request
         told = [m["content"] for m in env.llm.calls[STALL_NUDGE + 1]["messages"] if isinstance(m["content"], str)]
         self.assertTrue(any("since you last changed a file" in m for m in told))
 
@@ -490,6 +493,161 @@ class StallTests(unittest.TestCase):
         reads = [call("run_command", command=f"python3 -c 'print({i})'") for i in range(STALL_STOP + 4)]
         env.llm.replies = reads + [call("write_file", path="fix.py", content="x = 1"), done("Fixed.")]
         self.assertEqual(env.session().run("Find and fix it.")["status"], "done")
+
+
+class ClosingReportTests(unittest.TestCase):
+    """Found live: a worker finished and verified its change, then ran the same
+    check four times at temperature 0, ignoring the nudge; the task ended
+    stopped with only the guard's message and no report of its own."""
+
+    def _notes(self, env):
+        with open(os.path.join(env.work, "notes.txt"), "w") as f:
+            f.write("hello")
+        return call("read_file", path="notes.txt")
+
+    def test_after_a_repeat_nudge_the_next_step_is_sampled_more_freely(self):
+        from tests.helpers import Env
+        from claire_core.engine import UNSTICK_TEMPERATURE
+        env = Env()
+        self.addCleanup(env.close)
+        same = self._notes(env)
+        env.llm.replies = [same, same, same, done("The notes say hello.")]
+        self.assertEqual(env.session().run("Summarise notes.txt.")["status"], "done")
+        self.assertEqual([c["temperature"] for c in env.llm.calls], [None, None, None, UNSTICK_TEMPERATURE])
+
+    def test_a_turn_stopped_for_repeating_ends_with_its_own_report(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        same = self._notes(env)
+        report = "I read notes.txt: it says hello. Nothing is left to do."
+        env.llm.replies = [same] * 4 + [report]
+        outcome = env.session().run("Summarise notes.txt.")
+        self.assertEqual(outcome["status"], "stopped")       # the guard ended it; that stays visible
+        answer = outcome["answer"]
+        self.assertTrue(answer.startswith("I stopped: I ran the same `read_file` step 4 times"))
+        self.assertIn(report, answer)
+        self.assertIn("Check the working folder", answer)    # the receipts still go with it
+        self.assertNotIn("Repeating it will not help", answer)
+        sent = env.llm.calls[-1]["messages"]
+        self.assertIn("No more tools will run", sent[-1]["content"])
+        self.assertEqual(sent[-1]["role"], "user")
+        roles = [m["role"] for m in sent[1:]]
+        self.assertFalse(any(a == b == "user" for a, b in zip(roles, roles[1:])),
+                         "the closing request must not add a second user turn in a row")
+        answers = [e["text"] for e in env.events if e["type"] == "answer"]
+        self.assertEqual(answers, [answer])
+
+    def test_a_closing_reply_that_calls_a_tool_runs_nothing(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        same = self._notes(env)
+        env.llm.replies = [same] * 4 + [call("write_file", path="sneaky.txt", content="x")]
+        outcome = env.session().run("Summarise notes.txt.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertIn("Repeating it will not help", outcome["answer"])
+        self.assertFalse(os.path.exists(os.path.join(env.work, "sneaky.txt")))
+
+    def test_running_out_of_steps_ends_with_its_own_report(self):
+        from tests.helpers import Env
+        env = Env(max_steps=3)
+        self.addCleanup(env.close)
+        env.llm.replies = ([call("write_file", path=f"f{i}.txt", content=str(i)) for i in range(3)]
+                           + [done("Wrote f0 to f2; f3 is not started.")])
+        outcome = env.session().run("Write four files.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertTrue(outcome["answer"].startswith("I ran out of steps (3).\n\nWrote f0 to f2; f3 is not started."))
+        self.assertIn("Files changed: f0.txt, f1.txt, f2.txt", outcome["answer"])
+
+    def test_a_cut_off_closing_reply_is_not_taken_as_the_report(self):
+        from tests.helpers import Env
+        from claire_core.llm import ChatResult
+        env = Env()
+        self.addCleanup(env.close)
+        same = self._notes(env)
+        cut = ChatResult("I read notes.txt and it says", "", 0, 0)
+        cut.finish_reason = "length"
+        env.llm.replies = [same] * 4
+        real_chat = env.llm.chat
+        def chat(*a, **kw):
+            if not env.llm.replies:
+                env.llm.calls.append({"temperature": kw.get("temperature"), "messages": a[0]})
+                return cut
+            return real_chat(*a, **kw)
+        env.llm.chat = chat
+        outcome = env.session().run("Summarise notes.txt.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertNotIn("I read notes.txt and it says", outcome["answer"])
+        self.assertIn("Repeating it will not help", outcome["answer"])
+
+
+class UnstickTests(unittest.TestCase):
+    """Replayed live: with three identical copies of a call and its result in
+    view, the model copied the call again even when told not to."""
+
+    def test_the_nudge_leaves_one_copy_of_the_repeated_call_in_view(self):
+        from tests.helpers import Env
+        from claire_core.engine import UNSTICK_TEMPERATURE
+        env = Env()
+        self.addCleanup(env.close)
+        with open(os.path.join(env.work, "notes.txt"), "w") as f:
+            f.write("hello")
+        same = call("read_file", path="notes.txt")
+        seen = {}
+
+        def fourth(messages):
+            seen["copies"] = sum(1 for m in messages if m["role"] == "assistant" and m["content"] == same)
+            seen["last"] = messages[-1]["content"]
+            return done("The notes say hello.")
+        env.llm.replies = [same, same, same, fourth]
+        session = env.session()
+        self.assertEqual(session.run("Summarise notes.txt.")["status"], "done")
+        self.assertEqual(seen["copies"], 1)
+        self.assertIn("You have now made exactly this call 3 times", seen["last"])
+        self.assertEqual(env.llm.calls[-1]["temperature"], UNSTICK_TEMPERATURE)
+        roles = [m["role"] for m in session.messages[1:]]
+        self.assertFalse(any(a == b for a, b in zip(roles, roles[1:])), roles)
+
+    def test_other_steps_and_earlier_turns_are_left_alone(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        with open(os.path.join(env.work, "notes.txt"), "w") as f:
+            f.write("hello")
+        same = call("read_file", path="notes.txt")
+        session = env.session()
+        env.llm.replies = [same, done("It says hello.")]
+        session.run("Read notes.txt.")
+        other = call("list_files", path=".")
+        env.llm.replies = [same, other, same, same, done("Still hello.")]
+        session.run("Read it again, carefully.")
+        copies = sum(1 for m in session.messages if m["role"] == "assistant" and m["content"] == same)
+        self.assertEqual(copies, 2)       # the earlier turn's copy, and the latest one
+        self.assertTrue(any(m["role"] == "assistant" and m["content"] == other for m in session.messages))
+
+    def test_a_failure_is_summed_up_by_its_error_line_not_a_footer(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        crash = call("run_command", command="python3 -c \"import sys; print('Error: boom'); "
+                                            "print('Runtime v9.9.9'); sys.exit(1)\"")
+        env.llm.replies = [crash] * 5
+        outcome = env.session().run("Run the check.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertIn("failed the same way each time (Error: boom)", outcome["answer"])
+        self.assertIn("(failed: Error: boom)", outcome["answer"])
+
+    def test_files_a_command_changed_are_in_the_receipts(self):
+        from tests.helpers import Env
+        env = Env(max_steps=2)
+        self.addCleanup(env.close)
+        env.llm.replies = [call("write_file", path="a.txt", content="a"),
+                           call("run_command", command="echo made > made.txt"),
+                           call("list_files", path=".")]
+        outcome = env.session().run("Make the files.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertIn("Files changed: a.txt, made.txt.", outcome["answer"])
 
 
 class FolderChangeTests(unittest.TestCase):
@@ -510,10 +668,10 @@ class FolderChangeTests(unittest.TestCase):
         env = Env()
         self.addCleanup(env.close)
         session = env.session()
-        before = session._folder_signature()
+        before = session._folder_snapshot()
         os.makedirs(os.path.join(env.work, "__pycache__"))
         open(os.path.join(env.work, "__pycache__", "m.cpython-39.pyc"), "w").write("x")
         os.makedirs(os.path.join(env.work, ".pytest_cache"))
-        self.assertEqual(session._folder_signature(), before)
+        self.assertEqual(session._folder_snapshot(), before)
         open(os.path.join(env.work, "real.py"), "w").write("x = 1")
-        self.assertNotEqual(session._folder_signature(), before)
+        self.assertNotEqual(session._folder_snapshot(), before)

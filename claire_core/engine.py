@@ -26,7 +26,6 @@ Events (each a dict with "type", "thread", "ts", plus the fields shown):
 """
 
 import os
-import hashlib
 import json
 import re
 import threading
@@ -91,6 +90,25 @@ def _content(text, images):
 # changing anything is told to wrap up, and at the second number is stopped.
 STALL_NUDGE = 12
 STALL_STOP = 24
+# At temperature 0 the same context gives the same next step, so a model that
+# has repeated a call twice tends to copy itself again even after being told
+# not to (seen live: it ignored the nudge and ran the same check a fourth
+# time). The step after a repeat nudge is sampled with some freedom instead.
+UNSTICK_TEMPERATURE = 0.7
+
+_ERROR_LINE = re.compile(r"error|exception|traceback|fail|denied|not found|no such", re.I)
+
+
+def _headline(output, failed, limit=300):
+    """The line of a result that says what happened. For a failure, the last
+    line that reads like an error: the last line is often a footer (Node
+    ends a crash with its version), not the error."""
+    lines = [l.strip() for l in output.splitlines() if l.strip()]
+    if failed:
+        for line in reversed(lines):
+            if _ERROR_LINE.search(line):
+                return line[:limit]
+    return (lines[-1] if lines else "")[:limit]
 
 class Core:
     """The shared parts every session is built from. One per process."""
@@ -269,7 +287,7 @@ class Session:
 
     # -- model calls ---------------------------------------------------------
 
-    def _call(self, thinking, stream_state):
+    def _call(self, thinking, stream_state, temperature=None):
         last_reasoning = [""]
         streamed = {"content": "", "reasoning": "", "reported": 0}
         base_used = self.est_tokens()
@@ -305,6 +323,8 @@ class Session:
                   estimated_tokens=self.est_tokens())
         extra = ({"response_format": controller.response_format(self.tools), "temperature": 0}
                  if self.profile == "controller" else {})
+        if temperature is not None:
+            extra["temperature"] = temperature
         primed = 0.0
         prime = getattr(self.llm, "prime", None)
         if self.profile == "controller" and prime and len(request) > 2:
@@ -552,6 +572,8 @@ class Session:
         steps_since_change = None
         outcomes = []             # actual receipts, never model descriptions of them
         self._turn_outcomes = outcomes
+        self._turn_touched = []   # files that commands changed, from the folder itself
+        self._declined = set()    # flagged service actions sir said no to (or left unanswered)
         self._local_read_chars = 0
         self._local_last_read = None
         grounded_retry = False
@@ -561,6 +583,7 @@ class Session:
         # things go smoothly, so simple work stays fast and hard patches get
         # more depth.
         boost_left = 0
+        loosen = False             # sample the next step more freely (after a repeat nudge)
         step = 0
         # The budget is read every step: a skill loaded partway through (the
         # build tool loads its own) can need more room than the default.
@@ -585,14 +608,16 @@ class Session:
                 self.emit("compacted", before=used, after=self.est_tokens())
 
             t0 = time.time()
+            temperature = UNSTICK_TEMPERATURE if loosen else None
+            loosen = False
             try:
                 try:
-                    result = self._call(active, stream)
+                    result = self._call(active, stream, temperature)
                 except ContextOverflow:
                     # Emergency compaction, then retry this step once.
                     self.emit("notice", level="warn", text="context full - compacting")
                     self.compact()
-                    result = self._call(active, stream)
+                    result = self._call(active, stream, temperature)
             except Cancelled:
                 return self._end("cancelled")
             except ContextOverflow:
@@ -806,15 +831,18 @@ class Session:
                 # A command can write files too (a heredoc, a generator), so
                 # whether it changed the work is read from the folder itself.
                 tracked = name == "run_command" and self.profile != "controller"
-                before = self._folder_signature() if tracked else None
+                before = self._folder_snapshot() if tracked else None
                 result_text, failed, fault = self._execute(name, args)
                 acted = True
                 outcomes.append((name, args, result_text, failed))
                 if name in ("edit_file", "write_file") and not failed:
                     changed = True
                 elif tracked and before is not None:
-                    after = self._folder_signature()
+                    after = self._folder_snapshot()
                     changed = None if after is None else after != before
+                    if changed:      # the receipts name what a command changed, too
+                        self._turn_touched.extend(sorted(
+                            p for p in before.keys() | after.keys() if before.get(p) != after.get(p)))
                 else:
                     changed = None if tracked else False   # too big to tell: neither way
                 # The exact same call with the exact same result, again and
@@ -834,38 +862,45 @@ class Session:
                                         f"verified. If a result surprises you, say what you think the "
                                         f"cause is and act on that, instead of probing further.]")
                     if steps_since_change >= STALL_STOP:
-                        answer = (f"I stopped: {STALL_STOP} steps passed without any further change "
-                                  f"to the work, so I was no longer making progress. "
-                                  + self._progress_note(outcomes))
                         self.messages.append({"role": "user", "content": f"[{name} result]\n{result_text}"})
-                        self.messages.append({"role": "assistant", "content": answer})
                         self.emit("tool_result", name=name, first=(result_text.splitlines() or [""])[0][:300],
                                   failed=failed, fault=bool(fault))
                         self.emit("notice", level="warn", text="stopped: no progress since the last change")
-                        self.emit("answer", text=answer)
-                        return self._end("stopped", answer)
+                        return self._stop_with_report(
+                            f"I stopped: {STALL_STOP} steps passed without any further change "
+                            f"to the work, so I was no longer making progress.",
+                            "many steps have passed with no change to the work", outcomes)
                 repeats = 0
                 if not getattr(self, "_result_images", None):    # a fresh screenshot each time: watching
                     repeats = seen_since_change[key] = seen_since_change.get(key, 0) + 1
                 if repeats == 3:
+                    if len(calls) == 1:
+                        self._collapse_repeats(self.messages[-1]["content"], f"[{name} result]\n{outcomes[-1][2]}")
                     result_text += (f"\n\n[You have now made exactly this call {repeats} times since "
                                     f"anything changed, and got exactly this result each time. Running it "
                                     f"again will not change anything. Use what it showed you and take the "
                                     f"next step, or finish and report what you did, what you verified and "
                                     f"what remains.]")
+                    loosen = True
+                    self.emit("notice", level="info",
+                              text=f"the same {name} step came back 3 times; varying the next step")
                 if repeats >= 4:
-                    first = next((l for l in result_text.splitlines()[::-1] if l.strip()), "")[:300]
-                    answer = (f"I stopped: I ran the same `{name}` step {repeats} times with nothing changing"
-                              + (f" and it failed the same way each time ({first}). " if failed else
-                                 ", getting the same result each time. ")
-                              + "Repeating it will not help; this needs a different approach. "
-                              + self._progress_note(outcomes))
+                    first = _headline(outcomes[-1][2], failed)
+                    lead = (f"I stopped: I ran the same `{name}` step {repeats} times with nothing changing"
+                            + (f" and it failed the same way each time ({first})." if failed else
+                               ", getting the same result each time."))
                     self.messages.append({"role": "user", "content": f"[{name} result]\n{result_text}"})
-                    self.messages.append({"role": "assistant", "content": answer})
                     self.emit("tool_result", name=name, first=(result_text.splitlines() or [""])[0][:300],
                               failed=failed, fault=bool(fault))
                     self.emit("notice", level="warn", text=f"stopped repeating the same {name} step")
-                    if self.profile == "controller" and getattr(self, "defer_failure_answer", False):
+                    if self.profile != "controller":
+                        return self._stop_with_report(
+                            lead, "the same call kept returning the same result", outcomes,
+                            fallback="Repeating it will not help; this needs a different approach.")
+                    answer = (lead + " Repeating it will not help; this needs a different approach. "
+                              + self._progress_note(outcomes))
+                    self.messages.append({"role": "assistant", "content": answer})
+                    if getattr(self, "defer_failure_answer", False):
                         self._deferred_answer = answer
                     else:
                         self.emit("answer", text=answer)
@@ -874,6 +909,12 @@ class Session:
                 if left == 3 and self.profile != "controller":
                     result_text += ("\n\n[3 steps left in this turn. Finish now: report with done "
                                     "what is complete, what you verified, and what remains.]")
+                elif left == 2 and self.profile == "controller" and "spawn_task" in self.tools:
+                    # Seen live: the controller spent its whole budget reading a
+                    # project's files for a bug report and was cut off.
+                    result_text += ("\n\n[2 steps left in this turn. Answer now with what you have; "
+                                    "or, if the request needs files changed or more digging, start "
+                                    "a task with spawn_task now and put what you found in its brief.]")
                 if failed:
                     boost_left = max(boost_left, 2)   # a failing step earns more thought
                     failures_in_a_row += 1
@@ -910,23 +951,85 @@ class Session:
                     return self._end("stopped",answer)
             self._save()
 
+        if self.profile == "controller" and getattr(self, "defer_failure_answer", False):
+            # The hub may still hand the request to a worker; it shows this
+            # only if it does not, so the chat is not told the work may be
+            # incomplete just before being told it is under way.
+            self._deferred_answer = (f"I ran out of steps ({self.step_budget()}) before I could "
+                                     f"finish this, so I stopped.")
+            return self._end("stopped")
         self.emit("notice", level="warn",
                   text=f"hit the {self.step_budget()}-step cap. Task may be incomplete.")
         if self.profile == "controller":
             return self._end("stopped")
         # Never end a task silently: say what actually happened.
-        answer = (f"I ran out of steps ({self.step_budget()}) before writing my report. "
-                  + self._progress_note(outcomes))
+        return self._stop_with_report(f"I ran out of steps ({self.step_budget()}).",
+                                      "the step limit is reached", outcomes,
+                                      fallback="I did not get to write my report.")
+
+    def _stop_with_report(self, lead, why, outcomes, fallback=""):
+        """End a worker turn that a guard cut short. The model is asked once
+        for its own report (no more tools), so the turn still says what was
+        done and checked; the guard's reason and the receipts go with it, so
+        the words never outrun the facts. The status stays stopped."""
+        report = self._closing_report(why)
+        if report:
+            answer = f"{lead}\n\n{report}\n\n{self._progress_note(outcomes)}"
+        else:
+            answer = f"{lead} {fallback + ' ' if fallback else ''}{self._progress_note(outcomes)}"
         self.messages.append({"role": "assistant", "content": answer})
         self.emit("answer", text=answer)
         return self._end("stopped", answer)
 
-    def _folder_signature(self, limit=4000):
-        """A cheap fingerprint of the working folder (names, sizes, times),
-        to tell whether a command changed the work. Caches and compiled files
-        do not count. None when the folder is too big to check quickly."""
+    def _closing_report(self, why):
+        """The model's own final report, asked for once, with no tool allowed.
+        "" when it gives none: another tool call, a cut-off or empty reply, a
+        failed call, or a cancelled job."""
+        if self.cancel.is_set():
+            return ""
+        note = (f"[This turn is ending now: {why}. No more tools will run. Reply with your "
+                "final report as plain text, with no tool call: what you changed, what you "
+                "checked and what it showed, and anything still unfinished or unverified. "
+                "Claim only what the results above show: a check passed only if its output "
+                "says so, and checks after a failure in the same run did not run. If you are "
+                "unsure why something failed, say so rather than guess.]")
+        last = self.messages[-1] if self.messages else None
+        if last and last["role"] == "user":
+            # Into the last result, not a second user message in a row: some
+            # chat templates refuse turns that do not alternate.
+            content = last["content"]
+            last["content"] = (content + "\n\n" + note if isinstance(content, str)
+                               else list(content) + [{"type": "text", "text": note}])
+        else:
+            self.messages.append({"role": "user", "content": note})
+        stream = {"streaming": False, "sent": 0}
+        try:
+            result = self._call(bool(self.thinking), stream)
+        except Exception:                   # best effort: the guard's own answer stands
+            return ""
+        if stream["streaming"]:
+            self.emit("answer_discard")     # the final answer carries the report
+        reply = (result.content or "").strip()
+        if not reply or getattr(result, "finish_reason", None) == "length":
+            return ""
+        calls = protocol.parse_tool_calls(reply, self.tools, self.registry.extra_params(self.tools))
+        if calls:
+            name, args = calls[0]
+            if name != "done":
+                return ""
+            return (args.get("summary", "").strip()
+                    or protocol.prose_outside(reply, self.tools).strip())
+        if re.search(r"<(%s)\s*>" % "|".join(map(re.escape, self.tools)), reply):
+            return ""                       # a malformed tool call, not a report
+        return reply
+
+    def _folder_snapshot(self, limit=4000):
+        """A cheap picture of the working folder (each file's size and time),
+        to tell whether a command changed the work, and which files. Caches
+        and compiled files do not count. None when the folder is too big to
+        check quickly."""
         skip = set(self.settings.skip_dirs) | {".pytest_cache", ".mypy_cache", ".ruff_cache"}
-        digest, seen = hashlib.sha1(), 0
+        files_seen = {}
         for root, dirs, files in os.walk(self.workdir):
             dirs[:] = sorted(d for d in dirs if d not in skip)
             for name in sorted(files):
@@ -937,24 +1040,48 @@ class Session:
                     st = os.stat(path)
                 except OSError:
                     continue
-                digest.update(f"{os.path.relpath(path, self.workdir)}:{st.st_size}:{st.st_mtime_ns}\n".encode())
-                seen += 1
-                if seen > limit:
+                files_seen[os.path.relpath(path, self.workdir)] = (st.st_size, st.st_mtime_ns)
+                if len(files_seen) > limit:
                     return None
-        return digest.hexdigest()
+        return files_seen
 
-    @staticmethod
-    def _progress_note(outcomes):
+    def _collapse_repeats(self, call_text, result_head):
+        """Drop this turn's earlier copies of a repeated call and its identical
+        result, keeping the latest. With three identical copies in view the
+        model copies the call again however it is told: replayed live on the
+        27B, it did so every time at temperature 0 and in 1 of 3 samples at
+        0.7; with one copy left, 0 of 3 at 0.7."""
+        start, last = getattr(self, "_turn_message_start", 0), len(self.messages) - 1
+        drop = set()
+        for i in range(start, last):
+            m, reply = self.messages[i], self.messages[i + 1]
+            if (m["role"] == "assistant" and m["content"] == call_text and reply["role"] == "user"
+                    and isinstance(reply["content"], str)
+                    and (reply["content"] == result_head or reply["content"].startswith(result_head + "\n\n["))):
+                drop.update((i, i + 1))
+        if drop:
+            self.messages = [m for i, m in enumerate(self.messages) if i not in drop]
+
+    def _progress_note(self, outcomes):
         """What a stopped turn had done, from its receipts: the files it
-        changed and the last results, so the report is never empty."""
-        changed = list(dict.fromkeys(args.get("path", "") for name, args, _, failed in outcomes
-                                     if name in ("edit_file", "write_file") and not failed and args.get("path")))
+        changed (by edits or by commands) and the last results, so the report
+        is never empty."""
+        edited = [args.get("path", "") for name, args, _, failed in outcomes
+                  if name in ("edit_file", "write_file") and not failed and args.get("path")]
+        workdir = getattr(self, "workdir", None) or "."
+
+        def shown(path):
+            try:
+                return os.path.relpath(os.path.join(workdir, os.path.expanduser(path)), workdir)
+            except ValueError:       # Windows: another drive has no relative path
+                return path
+        changed = list(dict.fromkeys(shown(p) for p in edited + list(getattr(self, "_turn_touched", []))))
         ran = [(args.get("command", ""), result, failed) for name, args, result, failed in outcomes
                if name == "run_command"]
         note = (("Files changed: " + ", ".join(changed) + ". ") if changed
                 else "No files were changed. ")
         if ran:
             command, result, failed = ran[-1]
-            last = next((l for l in result.splitlines()[::-1] if l.strip()), "")[:200]
-            note += (f"Last command: `{command[:120]}` ({'failed' if failed else 'succeeded'}: {last}). ")
+            note += (f"Last command: `{command[:120]}` ({'failed' if failed else 'succeeded'}: "
+                     f"{_headline(result, failed, 200)}). ")
         return note + "Check the working folder before relying on this."

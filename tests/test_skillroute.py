@@ -96,7 +96,8 @@ class BudgetTests(unittest.TestCase):
         env.llm.replies = list(busy)
         plain = env.session()
         self.assertEqual(plain.run("go")["status"], "stopped")
-        self.assertEqual(len(env.llm.calls) - 6, 3)                  # the usual cap without it
+        # The usual cap without it (3 steps), then the request for its closing report.
+        self.assertEqual(len(env.llm.calls) - 6, 3 + 1)
 
 
 if __name__ == "__main__":

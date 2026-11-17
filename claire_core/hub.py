@@ -692,8 +692,9 @@ class Hub:
                               + "\n\nFull report: " + os.path.relpath(report_path, self.vault.path))
             if row["parent"] and not self._stop.is_set():
                 meaning = {"done": "done",
-                           "stopped": "stopped (it ran out of steps or lost its way "
-                                      "before finishing; the work is incomplete)",
+                           "stopped": "stopped (it was cut off before it finished on its own: "
+                                      "out of steps, no progress, or repeating a step; only what "
+                                      "its report shows done and checked is done)",
                            "error": "error (it could not continue)",
                            "cancelled": "cancelled"}.get(status, status)
                 report = (f"[task report] Task \"{row['title']}\" ({tid}) ended "

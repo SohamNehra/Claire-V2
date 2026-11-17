@@ -39,7 +39,7 @@ class FakeLLM:
 
     def chat(self, messages, role="brain", thinking=False, on_delta=None,
              cancel=None, max_tokens=None, temperature=None, response_format=None):
-        self.calls.append({"role": role, "thinking": thinking,
+        self.calls.append({"role": role, "thinking": thinking, "temperature": temperature,
                            "messages": [dict(m) for m in messages]})
         if not self.replies:
             raise AssertionError("the model was called more times than scripted")

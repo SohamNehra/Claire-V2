@@ -507,6 +507,73 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(len(answers), 1, answers)
         self.assertIn("could not complete", answers[0])
 
+    def _reads_to_the_cap(self):
+        paths = []
+        for i in range(self.env.core.settings.controller_max_steps):
+            path = os.path.join(self.env.work, f"part{i}.py")
+            with open(path, "w") as f:
+                f.write(f"x = {i}\n")
+            paths.append(path)
+        return [decision("local_files", action="read_text", path=p) for p in paths]
+
+    def test_a_controller_near_its_cap_is_told_to_answer_or_hand_on(self):
+        self.env.llm.replies = self._reads_to_the_cap()
+        with patch.object(self.hub, "resolve_workdir", return_value=(self.env.work, None)), \
+             patch.object(self.hub, "post"):
+            self.hub._run_turn("home", "Customers say the totals are wrong; fix it", 1)
+        budget = self.env.core.settings.controller_max_steps
+        told = lambda call: any("2 steps left" in str(m["content"]) for m in call["messages"])
+        self.assertFalse(told(self.env.llm.calls[budget - 3]))
+        self.assertTrue(told(self.env.llm.calls[budget - 2]))
+        # Handed on: the chat is not told the work may be incomplete first.
+        self.assertFalse(any(e["type"] == "notice" and "step cap" in e.get("text", "") for e in self.env.events))
+        answers = [e["text"] for e in self.env.events if e["type"] == "answer"]
+        self.assertEqual(len(answers), 1, answers)
+        self.assertIn("handed this to the coding worker", answers[0])
+
+    def test_a_capped_controller_that_is_not_handed_on_says_it_ran_out_of_steps(self):
+        self.env.llm.replies = self._reads_to_the_cap()
+        with patch.object(self.hub, "resolve_workdir", return_value=(None, "no folder")):
+            self.hub._run_turn("home", "Customers say the totals are wrong; fix it", 1)
+        answers = [e["text"] for e in self.env.events if e["type"] == "answer"]
+        self.assertEqual(len(answers), 1, answers)
+        self.assertIn("ran out of steps", answers[0])
+
+    def test_figures_in_a_brief_that_no_tool_gave_are_flagged_to_the_worker(self):
+        from claire_core.tools.tasks import unsourced_figures
+        briefs = []
+
+        def spawn(title, task, workdir, parent=None, skills=()):
+            briefs.append(task)
+            return {"id": "t-1", "status": "queued", "project": None}
+        brief = ("Fix the rounding. INV-1004 must show 17.99 (sir says 17.985 rounds up). "
+                 "INV-1001 should still show 1,087.02 and INV-1002 71.86. Python 3.12.1 is fine.")
+        self.env.llm.replies = [decision("local_files", action="locations"),
+                                decision("spawn_task", title="Fix rounding", task=brief, workdir=self.env.work),
+                                decision("done", summary="Under way.")]
+        s = self.hub._session("home")
+        with patch.object(self.hub, "resolve_workdir", return_value=(self.env.work, None)), \
+             patch.object(self.hub, "spawn_task", side_effect=spawn):
+            self.hub._run_turn("home", "INV-1004 bills 17.98 but 17.985 should round to 17.99. "
+                                       "Our ledger says INV-1001 totals 1087.02.", 1)
+        self.assertEqual(len(briefs), 1)
+        self.assertIn("treat them as unverified and check the real values yourself: 71.86.]", briefs[0])
+        self.assertEqual(unsourced_figures(s, "It costs 4.50. Then 17.99, then 80.5 and 80.50."), ["4.50", "80.5", "80.50"])
+
+    def test_a_brief_with_only_given_figures_is_left_alone(self):
+        briefs = []
+
+        def spawn(title, task, workdir, parent=None, skills=()):
+            briefs.append(task)
+            return {"id": "t-1", "status": "queued", "project": None}
+        self.env.llm.replies = [decision("spawn_task", title="Fix", task="Make INV-1004 show 17.99.",
+                                         workdir=self.env.work),
+                                decision("done", summary="Under way.")]
+        with patch.object(self.hub, "resolve_workdir", return_value=(self.env.work, None)), \
+             patch.object(self.hub, "spawn_task", side_effect=spawn):
+            self.hub._run_turn("home", "INV-1004 should show 17.99.", 1)
+        self.assertEqual(briefs, ["Make INV-1004 show 17.99."])
+
     def test_refusal_is_not_escalated_to_bypass_it(self):
         s = self.home()
         start = len(s.messages)

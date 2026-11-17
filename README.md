@@ -182,13 +182,18 @@ flowchart TD
    Code changes and figures computed from data (totals, averages, growth) always
    go to a worker, which computes them with code rather than estimating. If a
    quick attempt fails, the request is handed to a worker, and the chat shows
-   the handoff rather than the failed attempt.
+   the handoff rather than the failed attempt. Figures in a brief that neither
+   you nor a tool supplied are marked for the worker as unverified.
 2. **Task execution.** Workers run the agent loop with their project's memory
    and tools. The loop calls the model, parses tool requests, checks access,
    obtains approvals when required, and records results. Task reports return
    to the chat that requested the work. A worker that repeats exactly the same
-   step with the same result is told so on the third time and stopped on the
-   fourth, with a report saying why; the chat can then retry with a clearer brief.
+   step with the same result is told so on the third time, with the earlier
+   copies taken out of its view and the next step sampled with some variety (at
+   temperature 0 a model otherwise tends to copy itself), and stopped on the
+   fourth. A worker stopped by a guard (repeating a step, no progress, or out of
+   steps) is asked once for its own report, with no further tools; the report
+   returns with the reason it was stopped and the files that actually changed.
 3. **Live events.** The engine emits events instead of printing directly. The
    hub schedules chat and task work, while the HTTP service streams activity
    to the browser. Terminal rendering uses the same event structure. Terminal
@@ -229,11 +234,17 @@ question directly, or give Claire a task and an existing project folder, such
 as “Add tests for the parser in my project.” Longer work gets its own task
 thread, trace, and report. Approval requests appear in the app's Activity panel.
 
-![A chat where Claire hands a bug fix to a worker, notices it got stuck, retries with a clearer brief and reports the fix](docs/images/chat.png)
+![A chat in the Invoice Builder project: a customer's accountant says an invoice's tax is a cent short. Claire agrees, hands the fix to a worker, and reports it verified with a regression test](docs/images/chat.png)
 
 Ask for figures and a worker computes them from the data with code:
 
 ![Claire answers a sales question with exact figures computed from a CSV](docs/images/numbers.png)
+
+Ask for something new and a worker builds it in its own folder:
+
+![A chat asking for a focus timer web app: Claire creates the folder, a worker builds it, and Claire reports what was made and checked](docs/images/build.png)
+
+![The focus timer Claire built, running in a browser with its keyboard shortcuts](docs/images/focus-timer.png)
 
 A project can be a folder of work or a named group of chats. Tasks are filed
 under the project that owns their working directory; scratch and standard OS
@@ -244,7 +255,7 @@ The command center shows activity across projects, scheduled work, and task
 status. **Hide previous / Show previous** controls change sidebar visibility
 without deleting conversations or task history.
 
-![Claire's command center: one task running and two queued across three projects](docs/images/command-center.png)
+![Claire's command center: one task queued and one waiting for approval across two projects. Human-free mode is on, and a browser script still waits for a yes](docs/images/command-center.png)
 
 ### Memory
 
@@ -261,7 +272,7 @@ generated index: edit the underlying notes rather than the index itself.
 The vault is plain Markdown and can be opened in Obsidian or another editor.
 Identity notes live under `identity/`; user skills live under `skills/`.
 
-![A project page with its brief and recent work](docs/images/project.png)
+![The Invoice Builder project page: its chats and tasks, PROJECT.md with a rule Claire was asked to remember, and the last task report](docs/images/project.png)
 
 ### Skills and extensions
 
