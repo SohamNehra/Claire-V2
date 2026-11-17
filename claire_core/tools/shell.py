@@ -8,6 +8,16 @@ from . import Tool
 _TRUE = ("1", "true", "yes", "y")
 
 
+# A "no" (or no answer in time) is about the effect, not the spelling. Telling
+# the model only "choose another approach" invited it to get the same effect
+# with a different command: after a denied `rm`, a worker deleted the file with
+# python's os.unlink (2026-11-17). It must carry on without it, or ask.
+NOT_APPROVED = ("Do not retry it, and do not get the same effect another way (a different "
+                "command, a script, or another tool). Carry on without it if the work allows; "
+                "otherwise finish and report that this step needs sir's approval.")
+DENIED = "User DENIED this command. " + NOT_APPROVED
+
+
 def run_command(ctx, args):
     cmd = args.get("command", "").strip()
     if not cmd:
@@ -34,22 +44,21 @@ def run_command(ctx, args):
             flag = ("WRITES OUTSIDE PROJECT" if verdict.escapes
                     else "DANGEROUS" if verdict.level == "ask" else "")
             if not ctx.ask("command", cmd, flag, always=True):
-                return "User DENIED this command. Do not retry it; choose another approach."
+                return DENIED
         result = sandbox.run(cmd, cwd=ctx.workdir, timeout=timeout,
                              sandboxed=False, max_output=ctx.settings.max_output)
     elif outside:
         # Leaving the sandbox is never automatic, in any mode.
         if not ctx.ask("command", cmd, "RUNS OUTSIDE THE SANDBOX", always=True):
-            return ("User DENIED running this outside the sandbox. Do not retry "
-                    "it; choose another approach.")
+            return "User DENIED running this outside the sandbox. " + NOT_APPROVED
         result = sandbox.run(cmd, cwd=ctx.workdir, timeout=timeout,
                              sandboxed=False, max_output=ctx.settings.max_output)
     else:
         if verdict.level == "ask":
             if not ctx.ask("command", cmd, "DANGEROUS", always=True):
-                return "User DENIED this command. Do not retry it; choose another approach."
+                return DENIED
         elif not ctx.ask("command", cmd):
-            return "User DENIED this command. Do not retry it; choose another approach."
+            return DENIED
         result = sandbox.run(cmd, cwd=ctx.workdir, timeout=timeout,
                              max_output=ctx.settings.max_output)
 

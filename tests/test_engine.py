@@ -383,7 +383,7 @@ class RepeatedFailureTests(unittest.TestCase):
         env.llm.replies = [same] * 6
         outcome = env.session().run("Read missing.txt and summarise it.")
         self.assertEqual(outcome["status"], "stopped")
-        self.assertIn("4 times in a row and it failed the same way", outcome["answer"])
+        self.assertIn("4 times with nothing changing and it failed the same way", outcome["answer"])
         self.assertEqual(len(env.llm.calls), 4)          # no fifth, sixth... attempt
         # The third time, the model was told that repeating it changes nothing.
         self.assertIn("Running it again will not change anything", env.llm.calls[3]["messages"][-1]["content"])
@@ -406,7 +406,7 @@ class RepeatedFailureTests(unittest.TestCase):
         env.llm.replies = [same] * 6
         outcome = env.session().run("Summarise notes.txt.")
         self.assertEqual(outcome["status"], "stopped")
-        self.assertIn("with the same result each time, without moving on", outcome["answer"])
+        self.assertIn("getting the same result each time", outcome["answer"])
         self.assertEqual(len(env.llm.calls), 4)
 
     def test_a_nudged_thread_that_moves_on_finishes_normally(self):
@@ -418,3 +418,46 @@ class RepeatedFailureTests(unittest.TestCase):
         same = call("read_file", path="notes.txt")
         env.llm.replies = [same, same, same, done("The notes say hello.")]
         self.assertEqual(env.session().run("Summarise notes.txt.")["status"], "done")
+
+
+class StuckCycleTests(unittest.TestCase):
+    """Found live: a worker cycled through four commands, unchanged, to its step cap."""
+
+    def test_a_repeating_cycle_with_nothing_changing_is_stopped_with_a_report(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        for name in ("a.txt", "b.txt"):
+            with open(os.path.join(env.work, name), "w") as f:
+                f.write(name)
+        cycle = [call("read_file", path="a.txt"), call("read_file", path="b.txt")]
+        env.llm.replies = cycle * 6
+        outcome = env.session().run("Check both files.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertIn("4 times with nothing changing", outcome["answer"])
+        self.assertLessEqual(len(env.llm.calls), 8)
+
+    def test_running_tests_after_each_edit_is_progress_not_a_loop(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        with open(os.path.join(env.work, "notes.txt"), "w") as f:
+            f.write("v0")
+        check = call("read_file", path="notes.txt")
+        replies = []
+        for i in range(1, 6):
+            replies += [check, call("write_file", path=f"out{i}.txt", content=f"step {i}")]
+        env.llm.replies = replies + [done("All steps written.")]
+        self.assertEqual(env.session().run("Do five steps.")["status"], "done")
+
+    def test_running_out_of_steps_still_reports_what_was_done(self):
+        from tests.helpers import Env
+        env = Env(max_steps=4)
+        self.addCleanup(env.close)
+        env.llm.replies = [call("write_file", path=f"f{i}.txt", content=str(i)) for i in range(6)]
+        outcome = env.session().run("Write files.")
+        self.assertEqual(outcome["status"], "stopped")
+        self.assertIn("ran out of steps", outcome["answer"])
+        self.assertIn("Files changed: f0.txt, f1.txt, f2.txt, f3.txt", outcome["answer"])
+        warned = [m["content"] for m in env.llm.calls[-1]["messages"] if isinstance(m["content"], str)]
+        self.assertTrue(any("3 steps left in this turn" in m for m in warned))

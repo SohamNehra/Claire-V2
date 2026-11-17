@@ -128,3 +128,26 @@ class ModeServiceTests(ServiceCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DenialTests(unittest.TestCase):
+    """A worker whose `rm` was not approved deleted the file with os.unlink
+    instead (2026-11-17). A "no" is about the effect, not the spelling."""
+
+    def test_a_refused_delete_says_not_to_get_the_same_effect_another_way(self):
+        from tests.test_engine import call
+        env = Env()
+        self.addCleanup(env.close)
+        env.allow = False
+        open(os.path.join(env.work, "todos.json"), "w").write("[]")
+        env.llm.replies = [call("run_command", command="rm -f todos.json"),
+                           "Done.\n<done>\n<summary>\nLeft it.\n</summary>\n</done>"]
+        session = env.session()
+        session.run("Reset the todo file.")
+        result = next(m["content"] for m in session.messages
+                      if isinstance(m["content"], str) and m["content"].startswith("[run_command result]"))
+        self.assertIn("User DENIED", result)                       # still recognised as a denial
+        self.assertIn("do not get the same effect another way", result)
+        self.assertNotIn("choose another approach", result)
+        self.assertTrue(os.path.exists(os.path.join(env.work, "todos.json")))
+        self.assertTrue(any(e["type"] == "tool_result" and e["failed"] for e in env.events))

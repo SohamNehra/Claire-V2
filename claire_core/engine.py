@@ -536,7 +536,10 @@ class Session:
         self.messages.append({"role": "user", "content": _content(text, images)})
         bad_parses = 0
         failures_in_a_row = 0
-        same_call = (None, 0)     # (the exact call and its result, how many times in a row)
+        # Each exact call and its result, and how often it has come back the
+        # same since a file last changed (an edit resets it: re-running tests
+        # after each edit is progress, re-running them with nothing changed is not).
+        seen_since_change = {}
         outcomes = []             # actual receipts, never model descriptions of them
         self._turn_outcomes = outcomes
         self._local_read_chars = 0
@@ -796,21 +799,24 @@ class Session:
                 # in the result (which also changes what the model sees); the
                 # fourth time, stop and report honestly.
                 key = json.dumps([name, args, result_text], sort_keys=True, default=str)
-                same_call = (key, same_call[1] + 1 if same_call[0] == key else 1)
-                if getattr(self, "_result_images", None):
-                    same_call = (None, 0)    # a fresh screenshot each time: watching, not stuck
-                if same_call[1] == 3:
-                    result_text += (f"\n\n[You have now made exactly this call {same_call[1]} times "
-                                    f"and got exactly this result each time. Running it again will not "
-                                    f"change anything. Use what it showed you and take the next step, "
-                                    f"or finish and report what blocks you.]")
-                if same_call[1] >= 4:
+                if name in ("edit_file", "write_file") and not failed:
+                    seen_since_change = {}
+                repeats = 0
+                if not getattr(self, "_result_images", None):    # a fresh screenshot each time: watching
+                    repeats = seen_since_change[key] = seen_since_change.get(key, 0) + 1
+                if repeats == 3:
+                    result_text += (f"\n\n[You have now made exactly this call {repeats} times since "
+                                    f"anything changed, and got exactly this result each time. Running it "
+                                    f"again will not change anything. Use what it showed you and take the "
+                                    f"next step, or finish and report what you did, what you verified and "
+                                    f"what remains.]")
+                if repeats >= 4:
                     first = next((l for l in result_text.splitlines()[::-1] if l.strip()), "")[:300]
-                    answer = (f"I stopped: I ran the same `{name}` step {same_call[1]} times in a row "
-                              + (f"and it failed the same way each time ({first}). " if failed else
-                                 "with the same result each time, without moving on. ")
-                              + "Repeating it will not help. Changes made before that are still "
-                              "in the working folder; this needs a different approach.")
+                    answer = (f"I stopped: I ran the same `{name}` step {repeats} times with nothing changing"
+                              + (f" and it failed the same way each time ({first}). " if failed else
+                                 ", getting the same result each time. ")
+                              + "Repeating it will not help; this needs a different approach. "
+                              + self._progress_note(outcomes))
                     self.messages.append({"role": "user", "content": f"[{name} result]\n{result_text}"})
                     self.messages.append({"role": "assistant", "content": answer})
                     self.emit("tool_result", name=name, first=(result_text.splitlines() or [""])[0][:300],
@@ -821,6 +827,10 @@ class Session:
                     else:
                         self.emit("answer", text=answer)
                     return self._end("stopped", answer)
+                left = self.step_budget() - step
+                if left == 3 and self.profile != "controller":
+                    result_text += ("\n\n[3 steps left in this turn. Finish now: report with done "
+                                    "what is complete, what you verified, and what remains.]")
                 if failed:
                     boost_left = max(boost_left, 2)   # a failing step earns more thought
                     failures_in_a_row += 1
@@ -859,4 +869,27 @@ class Session:
 
         self.emit("notice", level="warn",
                   text=f"hit the {self.step_budget()}-step cap. Task may be incomplete.")
-        return self._end("stopped")
+        if self.profile == "controller":
+            return self._end("stopped")
+        # Never end a task silently: say what actually happened.
+        answer = (f"I ran out of steps ({self.step_budget()}) before writing my report. "
+                  + self._progress_note(outcomes))
+        self.messages.append({"role": "assistant", "content": answer})
+        self.emit("answer", text=answer)
+        return self._end("stopped", answer)
+
+    @staticmethod
+    def _progress_note(outcomes):
+        """What a stopped turn had done, from its receipts: the files it
+        changed and the last results, so the report is never empty."""
+        changed = list(dict.fromkeys(args.get("path", "") for name, args, _, failed in outcomes
+                                     if name in ("edit_file", "write_file") and not failed and args.get("path")))
+        ran = [(args.get("command", ""), result, failed) for name, args, result, failed in outcomes
+               if name == "run_command"]
+        note = (("Files changed: " + ", ".join(changed) + ". ") if changed
+                else "No files were changed. ")
+        if ran:
+            command, result, failed = ran[-1]
+            last = next((l for l in result.splitlines()[::-1] if l.strip()), "")[:200]
+            note += (f"Last command: `{command[:120]}` ({'failed' if failed else 'succeeded'}: {last}). ")
+        return note + "Check the working folder before relying on this."

@@ -639,7 +639,8 @@ class Connectors:
             title = f"{row['name']}: {action}\n" + (detail + "\n" if detail else "") + shown
             if not ask(title, flag):
                 return ("Sir did not approve this action, so it was not carried "
-                        "out. Do not retry it.")
+                        "out. Do not retry it, and do not get the same effect another "
+                        "way; carry on without it, or report that it needs his approval.")
         if hasattr(provider, "claim"):
             provider.claim(row, owner)
         try:

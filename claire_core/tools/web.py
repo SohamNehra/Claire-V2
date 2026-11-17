@@ -104,7 +104,8 @@ def fetch_url(ctx, args):
     # machine or the local network is different: it can reach services that
     # trust anything coming from here, so that still asks.
     if _local(url) and not ctx.ask("fetch", url, "LOCAL ADDRESS", always=True):
-        return "User DENIED this fetch. Do not retry it."
+        return ("User DENIED this fetch. Do not retry it or reach the same address another "
+                "way; carry on without it, or report that it needs sir's approval.")
 
     req = urllib.request.Request(url, headers={"User-Agent": "claire/2.0"})
     try:
