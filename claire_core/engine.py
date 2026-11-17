@@ -26,6 +26,7 @@ Events (each a dict with "type", "thread", "ts", plus the fields shown):
 """
 
 import os
+import hashlib
 import json
 import re
 import threading
@@ -84,7 +85,6 @@ def _content(text, images):
         parts.append({"type": "image_url",
                       "image_url": {"url": f"data:{mime};base64,{b64}"}})
     return parts
-
 
 
 # A worker that has changed files and then runs this many steps without
@@ -772,7 +772,10 @@ class Session:
                             {"tool": "done", "arguments": {"summary": summary}})}
                         if issue and not denied:
                             # The correction still ended in an unkept plan.
-                            # Let the hub recover the original request once.
+                            # Let the hub recover the original request once;
+                            # if it does not, it shows this explanation.
+                            if getattr(self, "defer_failure_answer", False):
+                                self._deferred_answer = summary
                             return self._end('stopped', summary)
                 if self.profile == 'controller' and controller.recoverable_failure(outcomes):
                     return self._end('stopped', summary)
@@ -800,19 +803,30 @@ class Session:
                     detail = f"{args['connector']} {args.get('action', '')}".strip()
                 self.emit("tool_call", name=name, detail=str(detail)[:300],
                           elapsed=elapsed, boosted=boosted)
+                # A command can write files too (a heredoc, a generator), so
+                # whether it changed the work is read from the folder itself.
+                tracked = name == "run_command" and self.profile != "controller"
+                before = self._folder_signature() if tracked else None
                 result_text, failed, fault = self._execute(name, args)
                 acted = True
                 outcomes.append((name, args, result_text, failed))
+                if name in ("edit_file", "write_file") and not failed:
+                    changed = True
+                elif tracked and before is not None:
+                    after = self._folder_signature()
+                    changed = None if after is None else after != before
+                else:
+                    changed = None if tracked else False   # too big to tell: neither way
                 # The exact same call with the exact same result, again and
                 # again: at temperature 0 the same context gives the same next
                 # step, so a stuck thread stays stuck. The third time, say so
                 # in the result (which also changes what the model sees); the
                 # fourth time, stop and report honestly.
                 key = json.dumps([name, args, result_text], sort_keys=True, default=str)
-                if name in ("edit_file", "write_file") and not failed:
+                if changed:
                     seen_since_change = {}
                     steps_since_change = 0
-                elif steps_since_change is not None and self.profile != "controller":
+                elif changed is False and steps_since_change is not None and self.profile != "controller":
                     steps_since_change += 1
                     if steps_since_change == STALL_NUDGE:
                         result_text += (f"\n\n[{STALL_NUDGE} steps have passed since you last changed "
@@ -906,6 +920,28 @@ class Session:
         self.messages.append({"role": "assistant", "content": answer})
         self.emit("answer", text=answer)
         return self._end("stopped", answer)
+
+    def _folder_signature(self, limit=4000):
+        """A cheap fingerprint of the working folder (names, sizes, times),
+        to tell whether a command changed the work. Caches and compiled files
+        do not count. None when the folder is too big to check quickly."""
+        skip = set(self.settings.skip_dirs) | {".pytest_cache", ".mypy_cache", ".ruff_cache"}
+        digest, seen = hashlib.sha1(), 0
+        for root, dirs, files in os.walk(self.workdir):
+            dirs[:] = sorted(d for d in dirs if d not in skip)
+            for name in sorted(files):
+                if name.endswith((".pyc", ".pyo")):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    continue
+                digest.update(f"{os.path.relpath(path, self.workdir)}:{st.st_size}:{st.st_mtime_ns}\n".encode())
+                seen += 1
+                if seen > limit:
+                    return None
+        return digest.hexdigest()
 
     @staticmethod
     def _progress_note(outcomes):

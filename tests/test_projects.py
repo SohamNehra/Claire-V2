@@ -369,3 +369,10 @@ class NewFolderAndNoteTests(unittest.TestCase):
         self.env.core.vault.remember("project", "Amounts are in rupees.", folder=project["slug"], name="Shop")
         brief = self.env.core.vault.project_brief(project["slug"])
         self.assertIn("- Uses Flask.\n\nAmounts are in rupees.\n", brief)
+
+
+class NewFolderPathTests(NewFolderAndNoteTests):
+    def test_a_bare_name_is_never_created_relative_to_claires_own_folder(self):
+        result = self.ask("Build it in a new folder called fresh-app", "fresh-app")
+        self.assertTrue(result["failed"])
+        self.assertFalse(os.path.exists(os.path.join(os.getcwd(), "fresh-app")))

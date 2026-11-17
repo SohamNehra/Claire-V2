@@ -92,6 +92,10 @@ vm.runInContext(`
 check("__table.includes('table') && __table.includes('th') && __table.includes('td')", true);
 check("__table.includes('Notebook <b>Pro</b>')", true);
 check("__table.filter(x => x === 'b').length", 0);
+// Review: a "|" line that is not a table used to loop forever.
+vm.runInContext(`globalThis.__pipe = flat(prose("| not a table, just a pipe\\nand a second line"));`, ctx);
+check("__pipe.includes('p') && __pipe.includes('table')", false);
+check("__pipe.join(' ').includes('| not a table, just a pipe')", true);
 // Projects: what counts as active work, and the remembered folder state.
 check("isActive({kind:'task',status:'waiting'})",true);
 check("isActive({kind:'task',status:'done',busy:true})",true);

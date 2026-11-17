@@ -425,7 +425,9 @@ function prose(text) {
       }
       root.append(list);
     } else {
-      const para = [];
+      // The first line is always taken, so a line no other rule claims (such
+      // as "|" text that is not a table) can never stall the loop.
+      const para = [lines[i++].trim()];
       while (i < lines.length && lines[i].trim() && !lines[i].trim().startsWith("```")
              && !isList(lines[i]) && !/^#{1,6}\s/.test(lines[i]) && !/^\s*\|/.test(lines[i])) {
         para.push(lines[i++].trim());

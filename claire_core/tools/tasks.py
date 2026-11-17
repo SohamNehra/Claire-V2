@@ -55,7 +55,8 @@ def _create_requested_folder(ctx, requested, title, problem):
         (m["content"] for m in reversed(session.messages)
          if m["role"] == "user" and isinstance(m["content"], str)), "")
     raw = (requested or "").strip().rstrip("/\\")
-    if not raw or text.startswith(("[task report]", "[integration report]")):
+    if (not raw or text.startswith(("[task report]", "[integration report]"))
+            or not os.path.isabs(os.path.expanduser(raw))):
         return None, problem, ""
     full = os.path.realpath(os.path.expanduser(raw))
     named = raw in text or full in text or full.replace(os.path.expanduser("~"), "~", 1) in text

@@ -490,3 +490,30 @@ class StallTests(unittest.TestCase):
         reads = [call("run_command", command=f"python3 -c 'print({i})'") for i in range(STALL_STOP + 4)]
         env.llm.replies = reads + [call("write_file", path="fix.py", content="x = 1"), done("Fixed.")]
         self.assertEqual(env.session().run("Find and fix it.")["status"], "done")
+
+
+class FolderChangeTests(unittest.TestCase):
+    """Review: a worker that writes files with commands is progressing."""
+
+    def test_files_written_by_commands_count_as_progress(self):
+        from tests.helpers import Env
+        from claire_core.engine import STALL_STOP
+        env = Env(max_steps=60)
+        self.addCleanup(env.close)
+        writes = [call("run_command", command=f"echo {i} > part{i}.txt") for i in range(STALL_STOP + 6)]
+        env.llm.replies = [call("write_file", path="start.txt", content="go")] + writes + [done("Wrote every part.")]
+        self.assertEqual(env.session().run("Write the parts.")["status"], "done")
+        self.assertTrue(os.path.exists(os.path.join(env.work, f"part{STALL_STOP + 5}.txt")))
+
+    def test_caches_a_command_leaves_behind_are_not_progress(self):
+        from tests.helpers import Env
+        env = Env()
+        self.addCleanup(env.close)
+        session = env.session()
+        before = session._folder_signature()
+        os.makedirs(os.path.join(env.work, "__pycache__"))
+        open(os.path.join(env.work, "__pycache__", "m.cpython-39.pyc"), "w").write("x")
+        os.makedirs(os.path.join(env.work, ".pytest_cache"))
+        self.assertEqual(session._folder_signature(), before)
+        open(os.path.join(env.work, "real.py"), "w").write("x = 1")
+        self.assertNotEqual(session._folder_signature(), before)
