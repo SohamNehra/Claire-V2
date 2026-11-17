@@ -1,0 +1,28 @@
+{
+  "before_reasoning_fix": {
+    "model": "qwen/qwen3.8-27b",
+    "elapsed_seconds": 713.0,
+    "steps": 8,
+    "independent_pass": true,
+    "model_status": "done",
+    "completion_tokens": 9676,
+    "first_prompt_tokens": 10518,
+    "max_generation_seconds": 487.435
+  },
+  "final": {
+    "model": "qwen/qwen3.8-27b",
+    "elapsed_seconds": 175.4,
+    "steps": 8,
+    "independent_pass": true,
+    "model_status": "done",
+    "completion_tokens": 1925,
+    "first_prompt_tokens": 10469,
+    "max_generation_seconds": 44.117
+  },
+  "scope": "Synthetic local integration repair, one completed run per configuration; no credentials or real service calls.",
+  "automated_tests": {
+    "baseline": 262,
+    "final": 279,
+    "result": "passed"
+  }
+}

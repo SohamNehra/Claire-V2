@@ -1,0 +1,35 @@
+name: Platform regression tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        python: ['3.12']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install Windows timezone support
+        if: runner.os == 'Windows'
+        run: python -m pip install -r requirements-windows.txt
+      - name: Run model-free regression suite
+        run: python -m unittest discover -s tests -t . -q
+      - name: Check browser JavaScript
+        run: node --check claire_core/web/app.js
+      - name: Run frontend contracts
+        run: node tests/ui/frontend_checks.cjs

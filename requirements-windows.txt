@@ -1,0 +1,3 @@
+# Only Windows needs a packaged IANA database and Windows-zone translation.
+tzdata>=2025.1
+tzlocal>=5,<6

@@ -1,0 +1,83 @@
+{
+  "unit_tests": 327,
+  "live_file_cases": [
+    {
+      "case": "list_documents",
+      "pass": true,
+      "seconds": 2.676,
+      "tools": [
+        "local_files"
+      ],
+      "failed_calls": 0
+    },
+    {
+      "case": "natural_file_reference",
+      "pass": true,
+      "seconds": 2.797,
+      "tools": [
+        "local_files"
+      ],
+      "failed_calls": 0
+    },
+    {
+      "case": "full_paged_document",
+      "pass": true,
+      "seconds": 20.402,
+      "tools": [
+        "local_files",
+        "local_files",
+        "local_files"
+      ],
+      "failed_calls": 0
+    }
+  ],
+  "full_read_coverage": [
+    [
+      0,
+      8000
+    ],
+    [
+      8000,
+      16000
+    ],
+    [
+      16000,
+      18469
+    ]
+  ],
+  "characters": 18469,
+  "source_sha256": {
+    "claire_core/tools/local.py": "36da13b4ece706f563c1e67379e9d3a0e8702620491359dfa1d36a7eb1f2e116",
+    "claire_core/controller.py": "189b04412b6fe97bc4692112989999ce156c34fea0e0752a217c9e04a24964dc",
+    "claire_core/engine.py": "09a8dd4cccb0dfb7dabccb91230631bdcf2c06439c2cdcea9b2a15934e590ca4",
+    "claire_core/hub.py": "94f85efdf7227266eca652087ebb260f5c50bb231761f1a45532bad9188cdf4c"
+  },
+  "production": [
+    {
+      "case": "list",
+      "pass": true,
+      "seconds": 7.912,
+      "tools": [
+        "local_files",
+        "local_files"
+      ],
+      "failed_calls": 0,
+      "roles": [
+        "talk"
+      ]
+    },
+    {
+      "case": "read",
+      "pass": true,
+      "seconds": 14.557,
+      "tools": [
+        "local_files",
+        "local_files"
+      ],
+      "failed_calls": 0,
+      "roles": [
+        "talk"
+      ]
+    }
+  ]
+}

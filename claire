@@ -1,0 +1,33 @@
+#!/bin/bash
+# Launcher for Claire. Starts llama-server if it isn't already up, then runs
+# the agent in whatever directory you're currently in.
+#
+#   claire                  interactive
+#   claire "fix the bug"    one-shot
+#   claire --yolo "..."     skip command approval
+#
+# All settings live in config.py next to this script. Do not edit paths here.
+
+set -euo pipefail
+
+# Resolve symlinks so this works when linked into ~/.local/bin.
+SRC="${BASH_SOURCE[0]}"
+while [ -L "$SRC" ]; do
+  DIR="$(cd -P "$(dirname "$SRC")" && pwd)"
+  SRC="$(readlink "$SRC")"
+  [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"
+done
+HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
+
+# Share v2's lifecycle so the legacy launcher also honors Splash/LM Studio.
+PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PYTHON'
+from claire_core.settings import Settings
+from claire_core.boot import ensure_brain
+settings = Settings()
+if settings.config and settings.config.AUTOSTART_SERVER:
+    problem = ensure_brain(settings, say=lambda text: print("  " + text, flush=True))
+    if problem:
+        raise SystemExit(problem)
+PYTHON
+
+exec python3 "$HERE/claire.py" "$@"

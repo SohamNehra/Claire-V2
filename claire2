@@ -1,0 +1,24 @@
+#!/bin/bash
+# Launcher for Claire v2. Runs the new core from whatever directory you are in.
+#
+#   claire2                  work in this directory (interactive)
+#   claire2 "fix the bug"    one-shot
+#   claire2 home             talk to Claire in her home thread
+#   claire2 tasks | approvals | tools | inbox | status | stop | serve
+#
+# All settings live in config.py next to this script. The model server is
+# started from Python now (claire_core/boot.py), so there is nothing to do here
+# but find the code.
+
+set -euo pipefail
+
+# Resolve symlinks so this works when linked into ~/.local/bin.
+SRC="${BASH_SOURCE[0]}"
+while [ -L "$SRC" ]; do
+  DIR="$(cd -P "$(dirname "$SRC")" && pwd)"
+  SRC="$(readlink "$SRC")"
+  [[ "$SRC" != /* ]] && SRC="$DIR/$SRC"
+done
+HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
+
+PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m claire_core "$@"
