@@ -365,7 +365,10 @@ const apps=JSON.parse(ctx.run([JSON.stringify({op:'apps'})]));
 let error='';try{ctx.run([JSON.stringify({op:'probe'})]);}catch(e){error=e.message;}
 process.stdout.write(JSON.stringify({permission,apps,error,calls}));
 """
-        run=subprocess.run([node,'-e',harness,str(script)],capture_output=True,text=True,timeout=5,check=True)
+        # The harness takes about 0.1 s, but Node's first start on a busy Windows
+        # runner (antivirus scanning node.exe) once took over 5 s in CI. A real
+        # hang still fails, just later.
+        run=subprocess.run([node,'-e',harness,str(script)],capture_output=True,text=True,timeout=60,check=True)
         result=json.loads(run.stdout)
         self.assertFalse(result['permission']['accessibility'])
         self.assertEqual(result['apps']['running'],['Google Chrome'])
