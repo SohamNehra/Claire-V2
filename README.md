@@ -174,11 +174,12 @@ flowchart TD
     end
     Threads --> Core
     subgraph Core["Shared core"]
-        LLM[LLM client] --> Runtime["LM Studio,<br/>llama.cpp,<br/>or Splash"]
-        Tools["Tools,<br/>sandbox,<br/>and guards"]
         Store[("SQLite:<br/>chats, tasks,<br/>history")]
+        Tools["Tools,<br/>sandbox,<br/>and guards"]
         Vault[("Markdown<br/>memory vault")]
+        LLM[LLM client]
     end
+    Core -->|HTTP| Runtime["Model server:<br/>LM Studio,<br/>llama.cpp,<br/>or Splash"]
 ```
 
 Chats and tasks are both threads that run the same agent loop on one shared
@@ -186,7 +187,8 @@ core; a chat runs it with the controller's rules (answer, or hand the work on)
 and a task with a worker's (do the work in its folder, then report). The
 scheduler starts tasks through the hub like any other request. SQLite is the
 record of what happened, so chats and task traces survive a restart; the
-Markdown vault is what Claire remembers and reads back as context.
+Markdown vault is what Claire remembers and reads back as context. The model
+runs in its own server process; the LLM client talks to it over HTTP.
 
 1. **Conversation and routing.** A chat controller answers ordinary messages,
    uses bounded local file actions, or starts a task with a brief, working
