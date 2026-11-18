@@ -23,7 +23,11 @@ Claire includes:
 [Clone and start](#clone-and-start) · [Architecture](#architecture) ·
 [Using Claire](#using-claire) · [Configuration](#configuration) ·
 [Platform support and safety](#platform-support-and-safety) ·
-[Development and testing](#development-and-testing) · [Troubleshooting](#troubleshooting)
+[Development and testing](#development-and-testing) · [Troubleshooting](#troubleshooting) ·
+[Contributing](#contributing) · [License](#license)
+
+Claire is open source under the [MIT License](LICENSE): clone it, change it,
+build something new on it, and share what you make.
 
 ## Clone and start
 
@@ -543,3 +547,28 @@ original single-conversation terminal agent. They use `config.py` and a model
 endpoint, without the v2 web service's project/thread management. Existing v1
 users can continue with that client; the startup instructions in this README
 use **Claire v2** through `claire2` and the Windows launchers.
+
+## Contributing
+
+Improvements are welcome, whether a fix, a new tool or connector, better
+Windows or Linux support, or a report of how Claire behaved with your model.
+
+1. Fork the repository and create a branch for your change.
+2. Run the tests described in [Development and testing](#development-and-testing);
+   they need no model. Add a test for the behaviour you change.
+3. Open a pull request that says what changed and how you checked it.
+
+To report a problem, open an issue with your OS, the model and runtime you
+used, what you asked Claire, and what happened. `service.log` usually shows
+the cause. Leave out personal data, tokens, and private file contents.
+
+Claire was built on and for a Mac first. Windows runs the core assistant (see
+[Platform support and safety](#platform-support-and-safety)) and is a good
+place to help.
+
+## License
+
+Claire is released under the [MIT License](LICENSE). You may use, copy,
+modify, merge, publish, distribute, sublicense, and sell copies of it, provided
+the copyright and permission notice are included. It comes without warranty.
+Models you run with Claire have their own licenses.
